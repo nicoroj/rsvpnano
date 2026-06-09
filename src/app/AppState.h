@@ -9,4 +9,5 @@ enum class AppState {
   UsbTransfer,
   Standby,
   Sleeping,
+  BitcoinTicker,
 };

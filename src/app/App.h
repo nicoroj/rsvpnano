@@ -39,6 +39,19 @@ class App {
   void update(uint32_t nowMs);
 
  private:
+  struct BitcoinResult {
+    bool success = false;
+    uint32_t priceUsd = 0;
+    int32_t change24hTenths = 0;  // change in 0.1% units (e.g. 234 = +23.4%)
+    char errorMsg[48] = {};
+  };
+
+  struct BitcoinFetchParams {
+    char wifiSsid[64];
+    char wifiPass[64];
+    QueueHandle_t queue = nullptr;
+  };
+
   static constexpr size_t kOtaVersionLabelMax = 32;
   static constexpr size_t kOtaSummaryLabelMax = 40;
   static constexpr size_t kOtaDetailLabelMax = 96;
@@ -288,6 +301,12 @@ class App {
   void runSdCardCheck(uint32_t nowMs);
   void openUpdateConfirm();
   void selectUpdateConfirmItem(uint32_t nowMs);
+  void enterBitcoinTicker(uint32_t nowMs);
+  void updateBitcoinTicker(uint32_t nowMs);
+  void exitBitcoinTicker(uint32_t nowMs);
+  void renderBitcoinTicker();
+  static void bitcoinFetchTask(void* params);
+
   void enterCompanionSync(uint32_t nowMs);
   void updateCompanionSync(uint32_t nowMs);
   void exitCompanionSync(uint32_t nowMs);
@@ -463,6 +482,11 @@ class App {
   MenuScreen menuScreen_ = MenuScreen::Main;
   MenuScreen restartConfirmReturnScreen_ = MenuScreen::Main;
   QueueHandle_t otaCheckQueue_ = nullptr;
+  QueueHandle_t bitcoinQueue_ = nullptr;
+  BitcoinResult bitcoinResult_;
+  bool bitcoinFetching_ = false;
+  bool bitcoinHasData_ = false;
+  uint32_t bitcoinLastFetchMs_ = 0;
   std::vector<String> settingsMenuItems_;
   std::vector<String> focusTimerGenreMenuItems_;
   std::vector<DisplayManager::LibraryItem> wifiNetworkMenuItems_;

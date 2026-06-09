@@ -3,6 +3,8 @@
 #include <esp_sleep.h>
 #include <esp_log.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include <algorithm>
 #include <climits>
 #include <cstdio>
@@ -93,6 +95,7 @@ enum MenuItem : size_t {
   MenuSdCardCheck,
   MenuRssFeeds,
   MenuCompanionSync,
+  MenuBitcoinTicker,
 #if RSVP_USB_TRANSFER_ENABLED
   MenuUsbTransfer,
 #endif
@@ -854,6 +857,8 @@ const char *App::stateName(AppState state) const {
       return "Menu";
     case AppState::CompanionSync:
       return "CompanionSync";
+    case AppState::BitcoinTicker:
+      return "BitcoinTicker";
     case AppState::UsbTransfer:
       return "UsbTransfer";
     case AppState::Standby:
@@ -919,6 +924,8 @@ void App::setState(AppState nextState, uint32_t nowMs) {
     case AppState::CompanionSync:
       display_.renderStatus("Sync", companionSync_.statusLine1(), companionSync_.statusLine2());
       break;
+    case AppState::BitcoinTicker:
+      break;
     case AppState::UsbTransfer:
       display_.renderStatus("USB", "Preparing SD", "Eject when done");
       break;
@@ -962,6 +969,11 @@ void App::updateState(uint32_t nowMs) {
 
   if (state_ == AppState::CompanionSync) {
     updateCompanionSync(nowMs);
+    return;
+  }
+
+  if (state_ == AppState::BitcoinTicker) {
+    updateBitcoinTicker(nowMs);
     return;
   }
 
@@ -1032,7 +1044,7 @@ void App::maybeSaveReadingPosition(uint32_t nowMs) {
 
 bool App::handleStandbyCombo(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
-      state_ == AppState::CompanionSync ||
+      state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
       state_ == AppState::Sleeping || powerOffStarted_ || !bootButtonReleasedSinceBoot_ ||
       !powerButtonReleasedSinceBoot_) {
     return false;
@@ -1102,7 +1114,7 @@ void App::handleBootButton(uint32_t nowMs) {
   }
 
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
-      state_ == AppState::CompanionSync ||
+      state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
       state_ == AppState::Sleeping || powerOffStarted_) {
     return;
   }
@@ -1155,7 +1167,8 @@ void App::handlePowerButton(uint32_t nowMs) {
     return;
   }
 
-  if (state_ == AppState::UsbTransfer || state_ == AppState::CompanionSync || powerOffStarted_) {
+  if (state_ == AppState::UsbTransfer || state_ == AppState::CompanionSync ||
+      state_ == AppState::BitcoinTicker || powerOffStarted_) {
     return;
   }
 
@@ -1192,8 +1205,8 @@ void App::handlePowerButton(uint32_t nowMs) {
 
 void App::toggleMenuFromPowerButton(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
-      state_ == AppState::CompanionSync || state_ == AppState::Standby ||
-      state_ == AppState::Sleeping) {
+      state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
+      state_ == AppState::Standby || state_ == AppState::Sleeping) {
     return;
   }
 
@@ -2584,6 +2597,9 @@ void App::selectMenuItem(uint32_t nowMs) {
       return;
     case MenuCompanionSync:
       enterCompanionSync(nowMs);
+      return;
+    case MenuBitcoinTicker:
+      enterBitcoinTicker(nowMs);
       return;
     case MenuSdCardCheck:
       runSdCardCheck(nowMs);
@@ -4022,6 +4038,207 @@ void App::selectUpdateConfirmItem(uint32_t nowMs) {
   runFirmwareUpdate(preferredOtaConfig(), false, nowMs);
 }
 
+// ── Bitcoin ticker ────────────────────────────────────────────────────────────
+
+static String btcFormatPrice(uint32_t price) {
+  String s = String(price);
+  int len = s.length();
+  String out;
+  out.reserve(len + len / 3 + 1);
+  for (int i = 0; i < len; i++) {
+    if (i > 0 && (len - i) % 3 == 0) out += ',';
+    out += s[i];
+  }
+  return "$" + out;
+}
+
+static String btcFormatChange(int32_t tenths) {
+  int32_t abs = tenths < 0 ? -tenths : tenths;
+  String s;
+  s += (tenths >= 0 ? "+" : "-");
+  s += String(abs / 10);
+  s += '.';
+  s += String(abs % 10);
+  s += "% 24h";
+  return s;
+}
+
+void App::bitcoinFetchTask(void* params) {
+  auto* p = static_cast<BitcoinFetchParams*>(params);
+  BitcoinResult result;
+
+  if (strlen(p->wifiSsid) == 0) {
+    strncpy(result.errorMsg, "No WiFi configured", sizeof(result.errorMsg) - 1);
+    xQueueSend(p->queue, &result, 0);
+    delete p;
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  WiFi.begin(p->wifiSsid, p->wifiPass);
+  const uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
+    vTaskDelay(pdMS_TO_TICKS(250));
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    strncpy(result.errorMsg, "WiFi failed", sizeof(result.errorMsg) - 1);
+    WiFi.disconnect(true);
+    xQueueSend(p->queue, &result, 0);
+    delete p;
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(8000);
+  http.begin(client,
+             "https://api.coingecko.com/api/v3/simple/price"
+             "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true");
+  http.addHeader("User-Agent", "PocketOS/1.0");
+
+  const int code = http.GET();
+  if (code == HTTP_CODE_OK) {
+    const String body = http.getString();
+    // Parse {"bitcoin":{"usd":65234.12,"usd_24h_change":2.34}}
+    int idx = body.indexOf("\"usd\":");
+    if (idx >= 0) {
+      int s = idx + 6;
+      while (s < (int)body.length() && body[s] == ' ') s++;
+      int e = s;
+      while (e < (int)body.length() && (isDigit(body[e]) || body[e] == '.' || body[e] == '-')) e++;
+      result.priceUsd = (uint32_t)body.substring(s, e).toFloat();
+    }
+    idx = body.indexOf("\"usd_24h_change\":");
+    if (idx >= 0) {
+      int s = idx + 17;
+      while (s < (int)body.length() && body[s] == ' ') s++;
+      int e = s;
+      while (e < (int)body.length() && (isDigit(body[e]) || body[e] == '.' || body[e] == '-')) e++;
+      float chg = body.substring(s, e).toFloat();
+      result.change24hTenths = (int32_t)(chg * 10.0f);
+    }
+    result.success = (result.priceUsd > 0);
+    if (!result.success) {
+      strncpy(result.errorMsg, "Parse error", sizeof(result.errorMsg) - 1);
+    }
+  } else {
+    snprintf(result.errorMsg, sizeof(result.errorMsg), "HTTP %d", code);
+  }
+
+  http.end();
+  WiFi.disconnect(true);
+  xQueueSend(p->queue, &result, 0);
+  delete p;
+  vTaskDelete(nullptr);
+}
+
+void App::enterBitcoinTicker(uint32_t nowMs) {
+  Serial.println("[btc] entering Bitcoin ticker");
+  saveReadingPosition(true);
+  pausedTouch_.active = false;
+  pausedTouchIntent_ = TouchIntent::None;
+  wpmFeedbackVisible_ = false;
+
+  bitcoinHasData_ = false;
+  bitcoinFetching_ = false;
+  bitcoinLastFetchMs_ = 0;
+
+  if (bitcoinQueue_) {
+    vQueueDelete(bitcoinQueue_);
+  }
+  bitcoinQueue_ = xQueueCreate(1, sizeof(BitcoinResult));
+
+  setState(AppState::BitcoinTicker, nowMs);
+  display_.renderStatus("Bitcoin", "Fetching...", "");
+
+  // Kick off first fetch
+  OtaUpdater::Config cfg = preferredOtaConfig();
+  auto* p = new BitcoinFetchParams{};
+  strncpy(p->wifiSsid, cfg.wifiSsid.c_str(), sizeof(p->wifiSsid) - 1);
+  strncpy(p->wifiPass, cfg.wifiPassword.c_str(), sizeof(p->wifiPass) - 1);
+  p->queue = bitcoinQueue_;
+  bitcoinFetching_ = true;
+  xTaskCreatePinnedToCore(bitcoinFetchTask, "btc_fetch", 8192, p, 1, nullptr, 0);
+}
+
+void App::renderBitcoinTicker() {
+  if (!bitcoinHasData_) {
+    display_.renderStatus("Bitcoin", bitcoinFetching_ ? "Fetching..." : "No data", "");
+    return;
+  }
+  if (!bitcoinResult_.success) {
+    display_.renderStatus("Bitcoin", "Error", bitcoinResult_.errorMsg);
+    return;
+  }
+  display_.renderStatus("Bitcoin",
+                        btcFormatPrice(bitcoinResult_.priceUsd),
+                        btcFormatChange(bitcoinResult_.change24hTenths));
+}
+
+void App::updateBitcoinTicker(uint32_t nowMs) {
+  // Poll fetch result
+  BitcoinResult incoming;
+  if (bitcoinQueue_ && xQueueReceive(bitcoinQueue_, &incoming, 0) == pdTRUE) {
+    bitcoinResult_ = incoming;
+    bitcoinHasData_ = true;
+    bitcoinFetching_ = false;
+    bitcoinLastFetchMs_ = nowMs;
+    Serial.printf("[btc] price=$%lu change=%ld tenths\n",
+                  (unsigned long)bitcoinResult_.priceUsd,
+                  (long)bitcoinResult_.change24hTenths);
+    renderBitcoinTicker();
+  }
+
+  // Auto-refresh every 60 s
+  if (!bitcoinFetching_ && bitcoinLastFetchMs_ > 0 && nowMs - bitcoinLastFetchMs_ >= 60000) {
+    OtaUpdater::Config cfg = preferredOtaConfig();
+    auto* p = new BitcoinFetchParams{};
+    strncpy(p->wifiSsid, cfg.wifiSsid.c_str(), sizeof(p->wifiSsid) - 1);
+    strncpy(p->wifiPass, cfg.wifiPassword.c_str(), sizeof(p->wifiPass) - 1);
+    p->queue = bitcoinQueue_;
+    bitcoinFetching_ = true;
+    display_.renderStatus("Bitcoin", "Refreshing...", "");
+    xTaskCreatePinnedToCore(bitcoinFetchTask, "btc_fetch", 8192, p, 1, nullptr, 0);
+  }
+
+  // BOOT short press = manual refresh
+  if (button_.wasReleasedEvent() && !bootButtonLongPressHandled_) {
+    bootButtonLongPressHandled_ = false;
+    if (button_.lastHoldDurationMs() < 900 && !bitcoinFetching_) {
+      OtaUpdater::Config cfg = preferredOtaConfig();
+      auto* p = new BitcoinFetchParams{};
+      strncpy(p->wifiSsid, cfg.wifiSsid.c_str(), sizeof(p->wifiSsid) - 1);
+      strncpy(p->wifiPass, cfg.wifiPassword.c_str(), sizeof(p->wifiPass) - 1);
+      p->queue = bitcoinQueue_;
+      bitcoinFetching_ = true;
+      display_.renderStatus("Bitcoin", "Refreshing...", "");
+      xTaskCreatePinnedToCore(bitcoinFetchTask, "btc_fetch", 8192, p, 1, nullptr, 0);
+    }
+  }
+
+  // BOOT long press or POWER press = exit to menu
+  const bool bootLong = button_.isHeld() && button_.heldDurationMs(nowMs) >= 900;
+  const bool powerTap = powerButton_.wasReleasedEvent() &&
+                        powerButton_.lastHoldDurationMs() < 1500;
+  if (bootLong || powerTap) {
+    exitBitcoinTicker(nowMs);
+  }
+}
+
+void App::exitBitcoinTicker(uint32_t nowMs) {
+  Serial.println("[btc] leaving Bitcoin ticker");
+  // Leave queue alive — the fetch task may still be posting into it; it will just be
+  // ignored once we're back in Menu state (we delete it on next enterBitcoinTicker).
+  bitcoinFetching_ = false;
+  menuScreen_ = MenuScreen::Main;
+  setState(AppState::Menu, nowMs);
+}
+
+// ── End Bitcoin ticker ────────────────────────────────────────────────────────
+
 void App::enterCompanionSync(uint32_t nowMs) {
   if (blockNetworkActionForOtaCheck("Sync", nowMs)) {
     return;
@@ -4220,6 +4437,7 @@ void App::exitUsbTransfer(uint32_t nowMs) {
 
 void App::enterStandby(uint32_t nowMs) {
   if (state_ == AppState::UsbTransfer || state_ == AppState::CompanionSync ||
+      state_ == AppState::BitcoinTicker ||
       state_ == AppState::Sleeping || powerOffStarted_) {
     return;
   }
@@ -5091,6 +5309,7 @@ void App::renderMainMenu() {
   items.push_back("SD card check");
   items.push_back("RSS feeds");
   items.push_back("Companion sync");
+  items.push_back("Bitcoin");
 #if RSVP_USB_TRANSFER_ENABLED
   items.push_back(uiText(UiText::UsbTransfer));
 #endif
