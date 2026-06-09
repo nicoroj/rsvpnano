@@ -38,6 +38,7 @@ class FocusTimer {
   void abandon();
 
   bool available() const;
+  bool readAccel(float& x, float& y, float& z);
   bool isActiveTimerRunning() const;
   State state() const;
   Genre genre() const;

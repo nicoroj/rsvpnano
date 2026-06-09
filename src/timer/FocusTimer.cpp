@@ -37,6 +37,11 @@ constexpr float kFlatAxisThreshold = 0.84f;
 
 bool FocusTimer::begin() { return initImu(); }
 
+bool FocusTimer::readAccel(float& x, float& y, float& z) {
+  if (!imuAvailable_) return false;
+  return readAccelerometer(x, y, z);
+}
+
 void FocusTimer::open() {
   if (!imuAvailable_) {
     initImu();

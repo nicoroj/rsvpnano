@@ -120,6 +120,12 @@ class DisplayManager {
                               const String &instruction, const String &footer = "",
                               int progressPercent = -1, bool breakAccent = false);
 
+  // Portrait game canvas (172 × 640). Call gameBegin → gameFillRect/gameDrawText → gameCommit.
+  void gameBegin();
+  void gameFillRect(int x, int y, int w, int h, uint16_t color);
+  void gameDrawText(const char* text, int x, int y, uint16_t color, int scale = 2);
+  void gameCommit();
+
  private:
   bool initPanel();
   bool allocateBuffers();
@@ -188,6 +194,8 @@ class DisplayManager {
   int logicalHeight() const;
   uint16_t focusTimerBreakColor() const;
 
+  BoardConfig::UiOrientation savedGameOrientation_ =
+      BoardConfig::UiOrientation::LandscapeFlipped;
   uint16_t *virtualFrame_ = nullptr;
   uint16_t *txBuffer_ = nullptr;
   size_t txBufferBytes_ = 0;

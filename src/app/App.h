@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "app/AppState.h"
+#include "game/RoadFighter.h"
 #include "app/Localization.h"
 #include "audio/AudioManager.h"
 #include "display/DisplayManager.h"
@@ -306,6 +307,9 @@ class App {
   void exitBitcoinTicker(uint32_t nowMs);
   void renderBitcoinTicker();
   static void bitcoinFetchTask(void* params);
+  void enterRoadFighter(uint32_t nowMs);
+  void updateRoadFighter(uint32_t nowMs);
+  void exitRoadFighter(uint32_t nowMs);
 
   void enterCompanionSync(uint32_t nowMs);
   void updateCompanionSync(uint32_t nowMs);
@@ -481,6 +485,7 @@ class App {
   size_t typographyPreviewSampleIndex_ = 0;
   MenuScreen menuScreen_ = MenuScreen::Main;
   MenuScreen restartConfirmReturnScreen_ = MenuScreen::Main;
+  RoadFighter roadFighter_;
   QueueHandle_t otaCheckQueue_ = nullptr;
   QueueHandle_t bitcoinQueue_ = nullptr;
   BitcoinResult bitcoinResult_;

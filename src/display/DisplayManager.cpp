@@ -3364,3 +3364,29 @@ void DisplayManager::renderFocusTimerScreen(const String &mode, const String &ge
   drawBatteryBadge(virtualWidth, virtualHeight);
   flushScaledFrame(1, virtualWidth, virtualHeight);
 }
+
+// ── Portrait game canvas ──────────────────────────────────────────────────────
+
+void DisplayManager::gameBegin() {
+  if (!initialized_) return;
+  savedGameOrientation_ = uiOrientation_;
+  uiOrientation_ = BoardConfig::UiOrientation::Portrait;
+  lastRenderKey_ = "";
+}
+
+void DisplayManager::gameFillRect(int x, int y, int w, int h, uint16_t color) {
+  if (!initialized_) return;
+  fillVirtualRect(x, y, w, h, color);
+}
+
+void DisplayManager::gameDrawText(const char* text, int x, int y, uint16_t color, int scale) {
+  if (!initialized_) return;
+  drawTinyTextAt(String(text), x, y, color, scale);
+}
+
+void DisplayManager::gameCommit() {
+  if (!initialized_) return;
+  flushScaledFrame(1, kPanelNativeWidth, kPanelNativeHeight);
+  uiOrientation_ = savedGameOrientation_;
+  lastRenderKey_ = "";
+}

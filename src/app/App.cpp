@@ -96,6 +96,7 @@ enum MenuItem : size_t {
   MenuRssFeeds,
   MenuCompanionSync,
   MenuBitcoinTicker,
+  MenuRoadFighter,
 #if RSVP_USB_TRANSFER_ENABLED
   MenuUsbTransfer,
 #endif
@@ -859,6 +860,8 @@ const char *App::stateName(AppState state) const {
       return "CompanionSync";
     case AppState::BitcoinTicker:
       return "BitcoinTicker";
+    case AppState::RoadFighterGame:
+      return "RoadFighter";
     case AppState::UsbTransfer:
       return "UsbTransfer";
     case AppState::Standby:
@@ -926,6 +929,8 @@ void App::setState(AppState nextState, uint32_t nowMs) {
       break;
     case AppState::BitcoinTicker:
       break;
+    case AppState::RoadFighterGame:
+      break;
     case AppState::UsbTransfer:
       display_.renderStatus("USB", "Preparing SD", "Eject when done");
       break;
@@ -974,6 +979,11 @@ void App::updateState(uint32_t nowMs) {
 
   if (state_ == AppState::BitcoinTicker) {
     updateBitcoinTicker(nowMs);
+    return;
+  }
+
+  if (state_ == AppState::RoadFighterGame) {
+    updateRoadFighter(nowMs);
     return;
   }
 
@@ -1045,6 +1055,7 @@ void App::maybeSaveReadingPosition(uint32_t nowMs) {
 bool App::handleStandbyCombo(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
+      state_ == AppState::RoadFighterGame ||
       state_ == AppState::Sleeping || powerOffStarted_ || !bootButtonReleasedSinceBoot_ ||
       !powerButtonReleasedSinceBoot_) {
     return false;
@@ -1115,6 +1126,7 @@ void App::handleBootButton(uint32_t nowMs) {
 
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
+      state_ == AppState::RoadFighterGame ||
       state_ == AppState::Sleeping || powerOffStarted_) {
     return;
   }
@@ -1168,7 +1180,8 @@ void App::handlePowerButton(uint32_t nowMs) {
   }
 
   if (state_ == AppState::UsbTransfer || state_ == AppState::CompanionSync ||
-      state_ == AppState::BitcoinTicker || powerOffStarted_) {
+      state_ == AppState::BitcoinTicker || state_ == AppState::RoadFighterGame ||
+      powerOffStarted_) {
     return;
   }
 
@@ -1206,6 +1219,7 @@ void App::handlePowerButton(uint32_t nowMs) {
 void App::toggleMenuFromPowerButton(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
+      state_ == AppState::RoadFighterGame ||
       state_ == AppState::Standby || state_ == AppState::Sleeping) {
     return;
   }
@@ -2600,6 +2614,9 @@ void App::selectMenuItem(uint32_t nowMs) {
       return;
     case MenuBitcoinTicker:
       enterBitcoinTicker(nowMs);
+      return;
+    case MenuRoadFighter:
+      enterRoadFighter(nowMs);
       return;
     case MenuSdCardCheck:
       runSdCardCheck(nowMs);
@@ -4239,6 +4256,57 @@ void App::exitBitcoinTicker(uint32_t nowMs) {
 
 // ── End Bitcoin ticker ────────────────────────────────────────────────────────
 
+// ── Road Fighter game ─────────────────────────────────────────────────────────
+
+void App::enterRoadFighter(uint32_t nowMs) {
+  saveReadingPosition(true);
+  pausedTouch_.active = false;
+  pausedTouchIntent_ = TouchIntent::None;
+  wpmFeedbackVisible_ = false;
+  roadFighter_.begin();
+  setState(AppState::RoadFighterGame, nowMs);
+}
+
+void App::updateRoadFighter(uint32_t nowMs) {
+  // Exit: hold boot button for 2 s (player steers with tilt, not buttons)
+  if (button_.isHeld() && button_.heldDurationMs(nowMs) >= 2000) {
+    exitRoadFighter(nowMs);
+    return;
+  }
+
+  // Read accelerometer tilt for proportional steering.
+  // y-axis gives left/right tilt when device held in portrait orientation.
+  // Positive y = tilted right; negative y = tilted left.
+  float ax = 0.0f, ay = 0.0f, az = 0.0f;
+  float steer = 0.0f;
+  if (focusTimer_.readAccel(ax, ay, az)) {
+    steer = ay;  // adjust sign here if steering feels reversed on the physical device
+  }
+
+  if (!roadFighter_.isGameOver()) {
+    roadFighter_.update(nowMs, steer);
+  }
+
+  roadFighter_.render(display_);
+
+  // On game over: boot short press = restart, power short press = exit
+  if (roadFighter_.isGameOver()) {
+    if (button_.wasReleasedEvent() && button_.lastHoldDurationMs() < 1800) {
+      roadFighter_.reset();
+    }
+    if (powerButton_.wasReleasedEvent() && powerButton_.lastHoldDurationMs() < 800) {
+      exitRoadFighter(nowMs);
+    }
+  }
+}
+
+void App::exitRoadFighter(uint32_t nowMs) {
+  menuScreen_ = MenuScreen::Main;
+  setState(AppState::Menu, nowMs);
+}
+
+// ── End Road Fighter game ─────────────────────────────────────────────────────
+
 void App::enterCompanionSync(uint32_t nowMs) {
   if (blockNetworkActionForOtaCheck("Sync", nowMs)) {
     return;
@@ -4437,7 +4505,7 @@ void App::exitUsbTransfer(uint32_t nowMs) {
 
 void App::enterStandby(uint32_t nowMs) {
   if (state_ == AppState::UsbTransfer || state_ == AppState::CompanionSync ||
-      state_ == AppState::BitcoinTicker ||
+      state_ == AppState::BitcoinTicker || state_ == AppState::RoadFighterGame ||
       state_ == AppState::Sleeping || powerOffStarted_) {
     return;
   }
@@ -5310,6 +5378,7 @@ void App::renderMainMenu() {
   items.push_back("RSS feeds");
   items.push_back("Companion sync");
   items.push_back("Bitcoin");
+  items.push_back("Road Fighter");
 #if RSVP_USB_TRANSFER_ENABLED
   items.push_back(uiText(UiText::UsbTransfer));
 #endif

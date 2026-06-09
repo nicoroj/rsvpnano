@@ -10,4 +10,5 @@ enum class AppState {
   Standby,
   Sleeping,
   BitcoinTicker,
+  RoadFighterGame,
 };
