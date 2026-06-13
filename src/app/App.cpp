@@ -2003,7 +2003,7 @@ void App::handleTouch(uint32_t nowMs) {
     if (btDisplayOff_) {
       if (ev.phase == TouchPhase::End) {
         btDisplayOff_ = false;
-        display_.setBrightnessPercent(100);
+        display_.setBacklight(true);
         renderMusicCanvas();
       }
       return;
@@ -2061,7 +2061,7 @@ void App::handleTouch(uint32_t nowMs) {
             renderMusicTrackList();
           } else if (sx > 590) {
             btDisplayOff_ = true;
-            display_.setBrightnessPercent(0);
+            display_.setBacklight(false);
           }
           return;
         }
@@ -4584,20 +4584,11 @@ void App::renderMusicCanvas() {
   musicCircle(display_, kMNextX, kMBtnCY, kMPrevR,     kMusicBtnBg);
   musicNextIcon(display_, kMNextX, kMBtnCY, kMusicWhite);
 
-  // ── Volume bar ───────────────────────────────────────────
-  constexpr int kVolSepY  = 132;
-  constexpr int kVolLabelY = 142;
-  constexpr int kVolBarX  = 55, kVolBarY = 141, kVolBarW = 520, kVolBarH = 18;
-
-  display_.musicFillRect(0, kVolSepY, kMusicLW, 1, kMusicDim);  // separator
-  display_.musicDrawText("VOL", 10, kVolLabelY, kMusicDim, 1);
-  String volStr = String(btPlayer_.volume()) + "/" + String(BluetoothPlayer::kVolumeMax);
-  int volLabelX = 590 - (int)volStr.length() * 6;
-  display_.musicDrawText(volStr.c_str(), volLabelX, kVolLabelY, kMusicWhite, 1);
-
-  display_.musicFillRect(kVolBarX, kVolBarY, kVolBarW, kVolBarH, kMusicBtnBg);
-  int fillW = (btPlayer_.volume() * (kVolBarW - 2)) / BluetoothPlayer::kVolumeMax;
-  if (fillW > 0) display_.musicFillRect(kVolBarX + 1, kVolBarY + 1, fillW, kVolBarH - 2, kMusicGreen);
+  // ── Volume label ─────────────────────────────────────────
+  display_.musicFillRect(0, 132, kMusicLW, 1, kMusicDim);  // separator
+  String volStr = "VOL " + String(btPlayer_.volume());
+  int volX = (kMusicLW - (int)volStr.length() * 12) / 2;
+  display_.musicDrawText(volStr.c_str(), volX, 144, kMusicDim, 2);
 
   display_.musicCommit();
 }
@@ -4655,7 +4646,7 @@ void App::updateBluetoothPlayer(uint32_t nowMs) {
   if (button_.isHeld() && button_.heldDurationMs(nowMs) >= 2000) {
     if (btDisplayOff_) {
       btDisplayOff_ = false;
-      display_.setBrightnessPercent(100);
+      display_.setBacklight(true);
     }
     exitBluetoothPlayer(nowMs);
     return;
@@ -4665,7 +4656,7 @@ void App::updateBluetoothPlayer(uint32_t nowMs) {
   if (button_.wasReleasedEvent() && button_.lastHoldDurationMs() < 2000) {
     if (btDisplayOff_) {
       btDisplayOff_ = false;
-      display_.setBrightnessPercent(100);
+      display_.setBacklight(true);
     } else {
       btPlayer_.togglePlayPause();
     }
@@ -4677,7 +4668,7 @@ void App::updateBluetoothPlayer(uint32_t nowMs) {
   if (powerButton_.wasReleasedEvent() && powerButton_.lastHoldDurationMs() < 1500) {
     if (btDisplayOff_) {
       btDisplayOff_ = false;
-      display_.setBrightnessPercent(100);
+      display_.setBacklight(true);
       renderMusicCanvas();
       return;
     }

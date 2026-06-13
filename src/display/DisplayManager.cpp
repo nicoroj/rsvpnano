@@ -983,6 +983,8 @@ void DisplayManager::prepareForSleep() {
   lastRenderKey_ = "";
 }
 
+void DisplayManager::setBacklight(bool on) { axs15231bSetBacklight(on); }
+
 bool DisplayManager::wakeFromSleep() {
   if (!allocateBuffers()) {
     ESP_LOGE(kDisplayTag, "Buffer allocation failed after wake");

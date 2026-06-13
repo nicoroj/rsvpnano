@@ -71,6 +71,7 @@ class DisplayManager {
   bool nightMode() const;
   void prepareForSleep();
   bool wakeFromSleep();
+  void setBacklight(bool on);
   void renderCenteredWord(const String &word, uint16_t color = 0xFFFF);
   void renderRsvpWord(const String &word, const String &chapterLabel = "",
                       uint8_t progressPercent = 0, bool showFooter = true,

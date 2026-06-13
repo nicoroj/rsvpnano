@@ -36,5 +36,5 @@ class BluetoothPlayer {
   std::vector<String> names_;
   int trackIndex_ = 0;
   bool playing_ = false;
-  int volume_ = 17;
+  int volume_ = 8;
 };
