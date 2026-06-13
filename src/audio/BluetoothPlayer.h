@@ -18,7 +18,11 @@ class BluetoothPlayer {
   bool hasNoTracks() const { return tracks_.empty(); }
   int trackCount() const { return (int)tracks_.size(); }
   int trackIndex() const { return trackIndex_; }
+  int volume() const { return volume_; }
+  static constexpr int kVolumeMax = 21;
   String trackDisplayName() const;
+  void volumeUp();
+  void volumeDown();
   void onTrackEnded();
 
  private:
@@ -30,4 +34,5 @@ class BluetoothPlayer {
   std::vector<String> names_;
   int trackIndex_ = 0;
   bool playing_ = false;
+  int volume_ = 17;
 };

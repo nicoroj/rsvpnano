@@ -27,7 +27,7 @@ bool BluetoothPlayer::begin() {
                     BoardConfig::PIN_AUDIO_DOUT,
                     I2S_PIN_NO_CHANGE,
                     BoardConfig::PIN_AUDIO_MCLK);
-  audio_->setVolume(17);
+  audio_->setVolume(volume_);
   if (!tracks_.empty()) {
     startTrack(0);
   }
@@ -67,6 +67,16 @@ void BluetoothPlayer::prev() {
 String BluetoothPlayer::trackDisplayName() const {
   if (trackIndex_ < 0 || trackIndex_ >= (int)names_.size()) return "";
   return names_[trackIndex_];
+}
+
+void BluetoothPlayer::volumeUp() {
+  if (volume_ < kVolumeMax) volume_++;
+  if (audio_) audio_->setVolume(volume_);
+}
+
+void BluetoothPlayer::volumeDown() {
+  if (volume_ > 0) volume_--;
+  if (audio_) audio_->setVolume(volume_);
 }
 
 void BluetoothPlayer::onTrackEnded() {

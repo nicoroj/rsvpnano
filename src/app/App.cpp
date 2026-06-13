@@ -1996,7 +1996,13 @@ void App::handleTouch(uint32_t nowMs) {
       const int dY = (int)ev.y - (int)pausedTouch_.startY;
       if (abs(dY) >= static_cast<int>(kSwipeThresholdPx) &&
           abs(dY) > abs(dX) + static_cast<int>(kAxisBiasPx)) {
+        // Up = prev, down = next
         if (dY > 0) btPlayer_.next(); else btPlayer_.prev();
+        renderBluetoothPlayer();
+      } else if (abs(dX) >= static_cast<int>(kSwipeThresholdPx) &&
+                 abs(dX) > abs(dY) + static_cast<int>(kAxisBiasPx)) {
+        // Right = volume up, left = volume down
+        if (dX > 0) btPlayer_.volumeUp(); else btPlayer_.volumeDown();
         renderBluetoothPlayer();
       } else if (abs(dX) <= static_cast<int>(kTapSlopPx) &&
                  abs(dY) <= static_cast<int>(kTapSlopPx)) {
@@ -4395,6 +4401,7 @@ void App::enterBluetoothPlayer(uint32_t nowMs) {
   wpmFeedbackVisible_ = false;
   btLastRenderedTrackIndex_ = -1;
   btLastRenderedPlaying_ = false;
+  btLastRenderedVolume_ = -1;
   audio_.releaseI2s();
   btPlayer_.begin();
   setState(AppState::BluetoothPlayer, nowMs);
@@ -4405,10 +4412,13 @@ void App::renderBluetoothPlayer() {
     display_.renderStatus("Music", "No tracks found", "Add .mp3 to /music");
     return;
   }
-  String posLine = (btPlayer_.isPlaying() ? "> " : "|| ") +
-                   String(btPlayer_.trackIndex() + 1) + " / " +
-                   String(btPlayer_.trackCount());
-  display_.renderStatus("Music", btPlayer_.trackDisplayName(), posLine);
+  // "< 2 / 5 >" — swipe up/down to change track
+  String trackLine = "< " + String(btPlayer_.trackIndex() + 1) +
+                     " / " + String(btPlayer_.trackCount()) + " >";
+  // "PLAY VOL 17" or "PAUSE VOL 17" — swipe left/right to change volume
+  String stateLine = (btPlayer_.isPlaying() ? "PLAY" : "PAUSE") +
+                     String(" VOL ") + String(btPlayer_.volume());
+  display_.renderStatus("Music", trackLine, stateLine);
 }
 
 void App::updateBluetoothPlayer(uint32_t nowMs) {
@@ -4433,12 +4443,15 @@ void App::updateBluetoothPlayer(uint32_t nowMs) {
     return;
   }
 
-  // Re-render when track or play state changes
+  // Re-render when track, play state, or volume changes
   const int idx = btPlayer_.trackIndex();
   const bool playing = btPlayer_.isPlaying();
-  if (idx != btLastRenderedTrackIndex_ || playing != btLastRenderedPlaying_) {
+  const int vol = btPlayer_.volume();
+  if (idx != btLastRenderedTrackIndex_ || playing != btLastRenderedPlaying_ ||
+      vol != btLastRenderedVolume_) {
     btLastRenderedTrackIndex_ = idx;
     btLastRenderedPlaying_ = playing;
+    btLastRenderedVolume_ = vol;
     renderBluetoothPlayer();
   }
 }

@@ -496,6 +496,7 @@ class App {
   BluetoothPlayer btPlayer_;
   int btLastRenderedTrackIndex_ = -1;
   bool btLastRenderedPlaying_ = false;
+  int btLastRenderedVolume_ = -1;
   QueueHandle_t otaCheckQueue_ = nullptr;
   QueueHandle_t bitcoinQueue_ = nullptr;
   BitcoinResult bitcoinResult_;
