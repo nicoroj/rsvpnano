@@ -1935,9 +1935,7 @@ void App::handleTouch(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::Standby ||
       state_ == AppState::Sleeping ||
-      state_ == AppState::CompanionSync ||
-      state_ == AppState::BitcoinTicker ||
-      state_ == AppState::RoadFighterGame) {
+      state_ == AppState::CompanionSync) {
     touch_.cancel();
     pausedTouch_.active = false;
     pausedTouchIntent_ = TouchIntent::None;
@@ -1959,6 +1957,21 @@ void App::handleTouch(uint32_t nowMs) {
       applyFocusTimerTouch(ev, nowMs);
     } else {
       applyMenuTouchGesture(ev, nowMs);
+    }
+  } else if (state_ == AppState::BitcoinTicker) {
+    if (ev.phase == TouchPhase::End && !bitcoinFetching_) {
+      OtaUpdater::Config cfg = preferredOtaConfig();
+      auto* p = new BitcoinFetchParams{};
+      strncpy(p->wifiSsid, cfg.wifiSsid.c_str(), sizeof(p->wifiSsid) - 1);
+      strncpy(p->wifiPass, cfg.wifiPassword.c_str(), sizeof(p->wifiPass) - 1);
+      p->queue = bitcoinQueue_;
+      bitcoinFetching_ = true;
+      display_.renderStatus("Bitcoin", "Refreshing...", "");
+      xTaskCreatePinnedToCore(bitcoinFetchTask, "btc_fetch", 8192, p, 1, nullptr, 0);
+    }
+  } else if (state_ == AppState::RoadFighterGame) {
+    if (ev.phase == TouchPhase::End && roadFighter_.isGameOver()) {
+      roadFighter_.reset();
     }
   } else {
     applyPausedTouchGesture(ev, nowMs);
@@ -4158,6 +4171,7 @@ void App::bitcoinFetchTask(void* params) {
 void App::enterBitcoinTicker(uint32_t nowMs) {
   Serial.println("[btc] entering Bitcoin ticker");
   saveReadingPosition(true);
+  touch_.cancel();
   pausedTouch_.active = false;
   pausedTouchIntent_ = TouchIntent::None;
   wpmFeedbackVisible_ = false;
@@ -4263,6 +4277,7 @@ void App::exitBitcoinTicker(uint32_t nowMs) {
 
 void App::enterRoadFighter(uint32_t nowMs) {
   saveReadingPosition(true);
+  touch_.cancel();
   pausedTouch_.active = false;
   pausedTouchIntent_ = TouchIntent::None;
   wpmFeedbackVisible_ = false;
