@@ -21,6 +21,8 @@ class BluetoothPlayer {
   int volume() const { return volume_; }
   static constexpr int kVolumeMax = 21;
   String trackDisplayName() const;
+  String trackDisplayNameAt(int index) const;
+  void playTrack(int index);
   void volumeUp();
   void volumeDown();
   void onTrackEnded();

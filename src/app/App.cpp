@@ -38,6 +38,17 @@ constexpr uint16_t kSwipeThresholdPx = 40;
 constexpr uint16_t kAxisBiasPx = 12;
 constexpr uint16_t kTapSlopPx = 26;
 constexpr int kMenuScrollPixelsPerItem = 50;
+
+// Music player canvas layout (172 × 640 portrait)
+constexpr int kMusicW   = 172;
+constexpr int kMusicH   = 640;
+constexpr int kBtnY     = 420;
+constexpr int kPrevCX   = 30;
+constexpr int kPlayCX   = 86;
+constexpr int kNextCX   = 142;
+constexpr int kPrevR    = 26;
+constexpr int kPlayR    = 34;
+constexpr int kTopZone  = 48;
 constexpr uint16_t kReaderDoubleTapSlopPx = 92;
 constexpr uint16_t kPreviousSentenceTapWidthPx = 96;
 constexpr uint16_t kPreviousSentenceTapHeightPx = 60;
@@ -1986,28 +1997,93 @@ void App::handleTouch(uint32_t nowMs) {
       roadFighter_.reset();
     }
   } else if (state_ == AppState::BluetoothPlayer) {
+    // Any touch wakes display if it was off
+    if (btDisplayOff_) {
+      if (ev.phase == TouchPhase::End) {
+        btDisplayOff_ = false;
+        display_.setBrightnessPercent(100);
+        renderMusicCanvas();
+      }
+      return;
+    }
+
     if (ev.phase == TouchPhase::Start) {
       pausedTouch_.active = true;
       pausedTouch_.startX = ev.x;
       pausedTouch_.startY = ev.y;
     } else if (ev.phase == TouchPhase::End && pausedTouch_.active) {
       pausedTouch_.active = false;
-      const int dX = (int)ev.x - (int)pausedTouch_.startX;
-      const int dY = (int)ev.y - (int)pausedTouch_.startY;
-      if (abs(dY) >= static_cast<int>(kSwipeThresholdPx) &&
-          abs(dY) > abs(dX) + static_cast<int>(kAxisBiasPx)) {
-        // Up = prev, down = next
-        if (dY > 0) btPlayer_.next(); else btPlayer_.prev();
-        renderBluetoothPlayer();
-      } else if (abs(dX) >= static_cast<int>(kSwipeThresholdPx) &&
-                 abs(dX) > abs(dY) + static_cast<int>(kAxisBiasPx)) {
-        // Right = volume up, left = volume down
-        if (dX > 0) btPlayer_.volumeUp(); else btPlayer_.volumeDown();
-        renderBluetoothPlayer();
-      } else if (abs(dX) <= static_cast<int>(kTapSlopPx) &&
-                 abs(dY) <= static_cast<int>(kTapSlopPx)) {
-        btPlayer_.togglePlayPause();
-        renderBluetoothPlayer();
+      const int sx = static_cast<int>(pausedTouch_.startX);
+      const int sy = static_cast<int>(pausedTouch_.startY);
+      const int ex = static_cast<int>(ev.x);
+      const int ey = static_cast<int>(ev.y);
+      const int dX = ex - sx;
+      const int dY = ey - sy;
+      const bool isTap = abs(dX) <= static_cast<int>(kTapSlopPx) &&
+                         abs(dY) <= static_cast<int>(kTapSlopPx);
+      const bool isSwipeY = abs(dY) >= static_cast<int>(kSwipeThresholdPx) &&
+                            abs(dY) > abs(dX) + static_cast<int>(kAxisBiasPx);
+
+      if (btTrackListVisible_) {
+        // ── Track list interaction ─────────────────────────
+        if (isTap) {
+          if (sy < kTopZone) {
+            // Tap header → back to main player
+            btTrackListVisible_ = false;
+            renderMusicCanvas();
+          } else {
+            // Tap a track to play it
+            constexpr int kItemH = 38;
+            int idx = btTrackListScroll_ + (sy - kTopZone - 4) / kItemH;
+            if (idx >= 0 && idx < btPlayer_.trackCount()) {
+              btPlayer_.playTrack(idx);
+              btTrackListVisible_ = false;
+              renderMusicCanvas();
+            }
+          }
+        } else if (isSwipeY) {
+          int maxScroll = std::max(0, btPlayer_.trackCount() - (kMusicH - kTopZone - 4) / 38);
+          if (dY < 0) btTrackListScroll_ = std::min(btTrackListScroll_ + 1, maxScroll);
+          else        btTrackListScroll_ = std::max(btTrackListScroll_ - 1, 0);
+          renderMusicTrackList();
+        }
+        return;
+      }
+
+      // ── Main player interaction ────────────────────────────
+      if (isTap) {
+        // Top bar zones
+        if (sy < kTopZone) {
+          if (sx < 50) {
+            // Folder icon → show track list
+            btTrackListScroll_ = 0;
+            btTrackListVisible_ = true;
+            renderMusicTrackList();
+          } else if (sx > 122) {
+            // Brightness icon → turn off display
+            btDisplayOff_ = true;
+            display_.setBrightnessPercent(0);
+          }
+          return;
+        }
+        // Button hit test (rough circle)
+        auto dist2 = [](int ax, int ay, int bx, int by) {
+          return (ax-bx)*(ax-bx) + (ay-by)*(ay-by);
+        };
+        if (dist2(sx, sy, kPrevCX, kBtnY) < (kPrevR+8)*(kPrevR+8)) {
+          btPlayer_.prev();
+          renderMusicCanvas();
+        } else if (dist2(sx, sy, kPlayCX, kBtnY) < (kPlayR+8)*(kPlayR+8)) {
+          btPlayer_.togglePlayPause();
+          renderMusicCanvas();
+        } else if (dist2(sx, sy, kNextCX, kBtnY) < (kPrevR+8)*(kPrevR+8)) {
+          btPlayer_.next();
+          renderMusicCanvas();
+        }
+      } else if (isSwipeY) {
+        // Swipe up = volume up, swipe down = volume down
+        if (dY < 0) btPlayer_.volumeUp(); else btPlayer_.volumeDown();
+        renderMusicCanvas();
       }
     }
   } else {
@@ -4390,7 +4466,169 @@ void App::exitRoadFighter(uint32_t nowMs) {
 
 // ── End Road Fighter game ─────────────────────────────────────────────────────
 
-// ── Bluetooth MP3 player ──────────────────────────────────────────────────────
+// ── Music Player canvas UI ────────────────────────────────────────────────────
+
+namespace {
+constexpr uint16_t kMusicBg      = 0x0000;
+constexpr uint16_t kMusicBar     = 0x18E3;
+constexpr uint16_t kMusicBtnBg   = 0x2124;
+constexpr uint16_t kMusicRing    = 0x7BCF;
+constexpr uint16_t kMusicWhite   = 0xFFFF;
+constexpr uint16_t kMusicDim     = 0x4A69;
+constexpr uint16_t kMusicGreen   = 0x07E0;
+constexpr uint16_t kMusicAccent  = 0xFD20;
+
+void musicCircle(DisplayManager& d, int cx, int cy, int r, uint16_t color) {
+  for (int dy = -r; dy <= r; dy++) {
+    int hw = (int)sqrtf((float)(r * r - dy * dy));
+    d.gameFillRect(cx - hw, cy + dy, 2 * hw + 1, 1, color);
+  }
+}
+
+void musicPlayIcon(DisplayManager& d, int cx, int cy, uint16_t col) {
+  for (int dy = -12; dy <= 12; dy++) {
+    int w = 13 - abs(dy);
+    d.gameFillRect(cx - 5, cy + dy, w, 1, col);
+  }
+}
+
+void musicPauseIcon(DisplayManager& d, int cx, int cy, uint16_t col) {
+  d.gameFillRect(cx - 9, cy - 12, 6, 24, col);
+  d.gameFillRect(cx + 3, cy - 12, 6, 24, col);
+}
+
+void musicPrevIcon(DisplayManager& d, int cx, int cy, uint16_t col) {
+  d.gameFillRect(cx - 8, cy - 12, 4, 24, col);   // vertical bar
+  for (int dy = -10; dy <= 10; dy++) {            // left-pointing triangle
+    int w = 11 - abs(dy);
+    d.gameFillRect(cx - 2, cy + dy, w, 1, col);
+  }
+}
+
+void musicNextIcon(DisplayManager& d, int cx, int cy, uint16_t col) {
+  d.gameFillRect(cx + 4, cy - 12, 4, 24, col);   // vertical bar
+  for (int dy = -10; dy <= 10; dy++) {            // right-pointing triangle
+    int w = 11 - abs(dy);
+    d.gameFillRect(cx - 9, cy + dy, w, 1, col);
+  }
+}
+
+String musicTruncate(String s, int maxChars) {
+  s.toUpperCase();
+  if ((int)s.length() > maxChars) {
+    s = s.substring(0, maxChars - 1) + ".";
+  }
+  return s;
+}
+}  // namespace
+
+void App::renderMusicCanvas() {
+  display_.gameBegin();
+  display_.gameFillRect(0, 0, kMusicW, kMusicH, kMusicBg);
+
+  // ── Top icon bar ────────────────────────────────────────
+  display_.gameFillRect(0, 0, kMusicW, kTopZone, kMusicBar);
+
+  // Folder / track list button (top-left)
+  display_.gameFillRect(7, 9, 30, 30, kMusicBtnBg);
+  display_.gameFillRect(11, 16, 22, 2, kMusicWhite);
+  display_.gameFillRect(11, 22, 22, 2, kMusicWhite);
+  display_.gameFillRect(11, 28, 22, 2, kMusicWhite);
+
+  // Backlight-off button (top-right) — sun asterisk
+  display_.gameFillRect(135, 9, 30, 30, kMusicBtnBg);
+  display_.gameFillRect(149, 13, 2, 14, kMusicWhite);  // vertical ray
+  display_.gameFillRect(143, 22, 14, 2, kMusicWhite);  // horizontal ray
+  display_.gameFillRect(144, 14, 3, 3, kMusicWhite);   // NW ray
+  display_.gameFillRect(153, 14, 3, 3, kMusicWhite);   // NE ray
+  display_.gameFillRect(144, 31, 3, 3, kMusicWhite);   // SW ray
+  display_.gameFillRect(153, 31, 3, 3, kMusicWhite);   // SE ray
+
+  // ── Track info ──────────────────────────────────────────
+  if (btPlayer_.hasNoTracks()) {
+    display_.gameDrawText("NO TRACKS", 14, 260, kMusicWhite, 2);
+    display_.gameDrawText("ADD .MP3 TO /MUSIC", 1, 292, kMusicDim, 1);
+  } else {
+    // Track name — max 13 chars at scale 2 (12px each = 156px)
+    String name = musicTruncate(btPlayer_.trackDisplayName(), 13);
+    int nameX = (kMusicW - (int)name.length() * 12) / 2;
+    display_.gameDrawText(name.c_str(), nameX, 230, kMusicWhite, 2);
+
+    // Track position
+    String pos = String(btPlayer_.trackIndex() + 1) + " / " + String(btPlayer_.trackCount());
+    int posX = (kMusicW - (int)pos.length() * 6) / 2;
+    display_.gameDrawText(pos.c_str(), posX, 260, kMusicDim, 1);
+  }
+
+  // ── Control buttons ──────────────────────────────────────
+  // PREV
+  musicCircle(display_, kPrevCX, kBtnY, kPrevR + 2, kMusicRing);
+  musicCircle(display_, kPrevCX, kBtnY, kPrevR,     kMusicBtnBg);
+  musicPrevIcon(display_, kPrevCX, kBtnY, kMusicWhite);
+
+  // PLAY / PAUSE (larger)
+  musicCircle(display_, kPlayCX, kBtnY, kPlayR + 3, kMusicWhite);
+  musicCircle(display_, kPlayCX, kBtnY, kPlayR,     kMusicBtnBg);
+  if (btPlayer_.isPlaying()) {
+    musicPauseIcon(display_, kPlayCX, kBtnY, kMusicWhite);
+  } else {
+    musicPlayIcon(display_, kPlayCX, kBtnY, kMusicWhite);
+  }
+
+  // NEXT
+  musicCircle(display_, kNextCX, kBtnY, kPrevR + 2, kMusicRing);
+  musicCircle(display_, kNextCX, kBtnY, kPrevR,     kMusicBtnBg);
+  musicNextIcon(display_, kNextCX, kBtnY, kMusicWhite);
+
+  // ── Volume bar ───────────────────────────────────────────
+  constexpr int kVolY = 530;
+  constexpr int kVolBarY = 546;
+  constexpr int kVolBarH = 14;
+  constexpr int kVolBarW = 150;
+  constexpr int kVolBarX = (kMusicW - kVolBarW) / 2;
+
+  display_.gameDrawText("VOL", kVolBarX, kVolY, kMusicDim, 1);
+  String volStr = String(btPlayer_.volume()) + "/" + String(BluetoothPlayer::kVolumeMax);
+  display_.gameDrawText(volStr.c_str(), kVolBarX + kVolBarW - (int)volStr.length() * 6, kVolY, kMusicWhite, 1);
+
+  display_.gameFillRect(kVolBarX, kVolBarY, kVolBarW, kVolBarH, kMusicBtnBg);
+  int fillW = (btPlayer_.volume() * (kVolBarW - 2)) / BluetoothPlayer::kVolumeMax;
+  if (fillW > 0) display_.gameFillRect(kVolBarX + 1, kVolBarY + 1, fillW, kVolBarH - 2, kMusicGreen);
+
+  // Swipe hint
+  display_.gameDrawText("SWIPE UP/DOWN = VOL", 2, 572, kMusicDim, 1);
+
+  display_.gameCommit();
+}
+
+void App::renderMusicTrackList() {
+  display_.gameBegin();
+  display_.gameFillRect(0, 0, kMusicW, kMusicH, kMusicBg);
+
+  // Header
+  display_.gameFillRect(0, 0, kMusicW, kTopZone, kMusicBar);
+  display_.gameDrawText("TRACKS", 34, 16, kMusicWhite, 2);
+
+  // Track list
+  constexpr int kItemH = 38;
+  constexpr int kListTop = kTopZone + 4;
+  const int count = btPlayer_.trackCount();
+  const int visibleItems = (kMusicH - kListTop) / kItemH;
+
+  for (int i = btTrackListScroll_; i < count && i < btTrackListScroll_ + visibleItems; i++) {
+    int yy = kListTop + (i - btTrackListScroll_) * kItemH;
+    bool isCurrent = (i == btPlayer_.trackIndex());
+
+    if (isCurrent) {
+      display_.gameFillRect(0, yy, kMusicW, kItemH - 2, kMusicBtnBg);
+    }
+    String name = musicTruncate(btPlayer_.trackDisplayNameAt(i), 26);
+    uint16_t col = isCurrent ? kMusicAccent : kMusicWhite;
+    display_.gameDrawText(name.c_str(), 6, yy + 12, col, 1);
+  }
+
+  display_.gameCommit();
+}
 
 void App::enterBluetoothPlayer(uint32_t nowMs) {
   Serial.println("[music] entering music player");
@@ -4402,23 +4640,13 @@ void App::enterBluetoothPlayer(uint32_t nowMs) {
   btLastRenderedTrackIndex_ = -1;
   btLastRenderedPlaying_ = false;
   btLastRenderedVolume_ = -1;
+  btTrackListVisible_ = false;
+  btTrackListScroll_ = 0;
+  btDisplayOff_ = false;
   audio_.releaseI2s();
   btPlayer_.begin();
   setState(AppState::BluetoothPlayer, nowMs);
-}
-
-void App::renderBluetoothPlayer() {
-  if (btPlayer_.hasNoTracks()) {
-    display_.renderStatus("Music", "No tracks found", "Add .mp3 to /music");
-    return;
-  }
-  // "< 2 / 5 >" — swipe up/down to change track
-  String trackLine = "< " + String(btPlayer_.trackIndex() + 1) +
-                     " / " + String(btPlayer_.trackCount()) + " >";
-  // "PLAY VOL 17" or "PAUSE VOL 17" — swipe left/right to change volume
-  String stateLine = (btPlayer_.isPlaying() ? "PLAY" : "PAUSE") +
-                     String(" VOL ") + String(btPlayer_.volume());
-  display_.renderStatus("Music", trackLine, stateLine);
+  renderMusicCanvas();
 }
 
 void App::updateBluetoothPlayer(uint32_t nowMs) {
@@ -4426,22 +4654,39 @@ void App::updateBluetoothPlayer(uint32_t nowMs) {
 
   // Long-hold BOOT (2 s) = exit
   if (button_.isHeld() && button_.heldDurationMs(nowMs) >= 2000) {
+    if (btDisplayOff_) {
+      btDisplayOff_ = false;
+      display_.setBrightnessPercent(100);
+    }
     exitBluetoothPlayer(nowMs);
     return;
   }
 
-  // Short BOOT release = toggle play/pause
+  // Short BOOT release = toggle play/pause (also wakes display if off)
   if (button_.wasReleasedEvent() && button_.lastHoldDurationMs() < 2000) {
-    btPlayer_.togglePlayPause();
-    renderBluetoothPlayer();
+    if (btDisplayOff_) {
+      btDisplayOff_ = false;
+      display_.setBrightnessPercent(100);
+    } else {
+      btPlayer_.togglePlayPause();
+    }
+    renderMusicCanvas();
     return;
   }
 
   // Power button = exit
   if (powerButton_.wasReleasedEvent() && powerButton_.lastHoldDurationMs() < 1500) {
+    if (btDisplayOff_) {
+      btDisplayOff_ = false;
+      display_.setBrightnessPercent(100);
+      renderMusicCanvas();
+      return;
+    }
     exitBluetoothPlayer(nowMs);
     return;
   }
+
+  if (btDisplayOff_) return;  // no auto-redraw while display is off
 
   // Re-render when track, play state, or volume changes
   const int idx = btPlayer_.trackIndex();
@@ -4452,12 +4697,20 @@ void App::updateBluetoothPlayer(uint32_t nowMs) {
     btLastRenderedTrackIndex_ = idx;
     btLastRenderedPlaying_ = playing;
     btLastRenderedVolume_ = vol;
-    renderBluetoothPlayer();
+    if (btTrackListVisible_) {
+      renderMusicTrackList();
+    } else {
+      renderMusicCanvas();
+    }
   }
 }
 
 void App::exitBluetoothPlayer(uint32_t nowMs) {
   Serial.println("[music] leaving music player");
+  if (btDisplayOff_) {
+    btDisplayOff_ = false;
+    display_.setBrightnessPercent(100);
+  }
   btPlayer_.stop();
   audio_.reclaimI2s();
   menuScreen_ = MenuScreen::Main;

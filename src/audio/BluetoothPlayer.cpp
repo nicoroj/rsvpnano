@@ -79,6 +79,15 @@ void BluetoothPlayer::volumeDown() {
   if (audio_) audio_->setVolume(volume_);
 }
 
+String BluetoothPlayer::trackDisplayNameAt(int index) const {
+  if (index < 0 || index >= (int)names_.size()) return "";
+  return names_[index];
+}
+
+void BluetoothPlayer::playTrack(int index) {
+  startTrack(index);
+}
+
 void BluetoothPlayer::onTrackEnded() {
   next();
 }

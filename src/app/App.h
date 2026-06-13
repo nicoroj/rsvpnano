@@ -314,7 +314,8 @@ class App {
   void enterBluetoothPlayer(uint32_t nowMs);
   void updateBluetoothPlayer(uint32_t nowMs);
   void exitBluetoothPlayer(uint32_t nowMs);
-  void renderBluetoothPlayer();
+  void renderMusicCanvas();
+  void renderMusicTrackList();
 
   void enterCompanionSync(uint32_t nowMs);
   void updateCompanionSync(uint32_t nowMs);
@@ -497,6 +498,9 @@ class App {
   int btLastRenderedTrackIndex_ = -1;
   bool btLastRenderedPlaying_ = false;
   int btLastRenderedVolume_ = -1;
+  bool btTrackListVisible_ = false;
+  int btTrackListScroll_ = 0;
+  bool btDisplayOff_ = false;
   QueueHandle_t otaCheckQueue_ = nullptr;
   QueueHandle_t bitcoinQueue_ = nullptr;
   BitcoinResult bitcoinResult_;
