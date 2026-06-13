@@ -100,14 +100,10 @@ constexpr size_t kBrightnessLevelCount = sizeof(kBrightnessLevels) / sizeof(kBri
 namespace {
 
 enum MenuItem : size_t {
-  MenuResume,
-  MenuChapters,
-  MenuBooks,
-  MenuArticles,
+  MenuRsvpReader,
   MenuFocusTimer,
   MenuSettings,
   MenuSdCardCheck,
-  MenuRssFeeds,
   MenuCompanionSync,
   MenuBitcoinTicker,
   MenuRoadFighter,
@@ -118,6 +114,16 @@ enum MenuItem : size_t {
 #endif
   MenuPowerOff,
   MenuItemCount,
+};
+
+enum ReaderMenuItem : size_t {
+  ReaderMenuBack,
+  ReaderMenuResume,
+  ReaderMenuChapters,
+  ReaderMenuBooks,
+  ReaderMenuArticles,
+  ReaderMenuRssFeeds,
+  ReaderMenuItemCount,
 };
 
 enum SettingsItem : size_t {
@@ -986,9 +992,9 @@ void App::updateState(uint32_t nowMs) {
       return;
     }
 
-    setState((touchPlayHeld_ || playLocked_ || pauseAtSentenceEndRequested_) ? AppState::Playing
-                                                                              : AppState::Paused,
-             nowMs);
+    menuScreen_ = MenuScreen::Main;
+    menuSelectedIndex_ = MenuRsvpReader;
+    setState(AppState::Menu, nowMs);
     return;
   }
 
@@ -1282,7 +1288,7 @@ void App::openMainMenu(uint32_t nowMs) {
   pausedTouchIntent_ = TouchIntent::None;
   touchPlayHeld_ = false;
   menuScreen_ = MenuScreen::Main;
-  menuSelectedIndex_ = MenuResume;
+  menuSelectedIndex_ = MenuRsvpReader;
   wpmFeedbackVisible_ = false;
   contextViewVisible_ = false;
   if (state_ == AppState::Playing) {
@@ -2116,7 +2122,12 @@ void App::handleTouch(uint32_t nowMs) {
 
       if (isTap || isSwipeLeft) {
         if (isTap && sy >= 155) {
-          tennisUndo();
+          const int sx = static_cast<int>(pausedTouch_.startX);
+          if (sx >= 320) {
+            tennisRestartGame();
+          } else {
+            tennisUndo();
+          }
           renderTennisCanvas();
         } else if (isSwipeLeft) {
           tennisUndo();
@@ -2664,6 +2675,8 @@ void App::moveMenuSelection(int direction) {
   } else if (menuScreen_ == MenuScreen::FocusTimerGenres) {
     selectedIndex = &focusTimerGenreSelectedIndex_;
     itemCount = focusTimerGenreMenuItems_.size();
+  } else if (menuScreen_ == MenuScreen::ReaderMenu) {
+    itemCount = ReaderMenuItemCount;
   }
 
   if (itemCount == 0) {
@@ -2718,45 +2731,15 @@ void App::moveMenuSelection(int direction) {
     Serial.printf("[timer] selected genre=%s\n",
                   focusTimerGenreMenuItems_[focusTimerGenreSelectedIndex_].c_str());
   } else {
-    String selectedLabel = uiText(UiText::Resume);
+    String selectedLabel;
     switch (menuSelectedIndex_) {
-      case MenuResume:
-        selectedLabel = uiText(UiText::Resume);
-        break;
-      case MenuChapters:
-        selectedLabel = uiText(UiText::Chapters);
-        break;
-      case MenuBooks:
-        selectedLabel = "Books";
-        break;
-      case MenuArticles:
-        selectedLabel = "Articles";
-        break;
-      case MenuFocusTimer:
-        selectedLabel = "Focus Timer";
-        break;
-      case MenuSettings:
-        selectedLabel = uiText(UiText::Settings);
-        break;
-      case MenuSdCardCheck:
-        selectedLabel = "SD card check";
-        break;
-      case MenuRssFeeds:
-        selectedLabel = "RSS feeds";
-        break;
-      case MenuCompanionSync:
-        selectedLabel = "Companion sync";
-        break;
-#if RSVP_USB_TRANSFER_ENABLED
-      case MenuUsbTransfer:
-        selectedLabel = uiText(UiText::UsbTransfer);
-        break;
-#endif
-      case MenuPowerOff:
-        selectedLabel = uiText(UiText::PowerOff);
-        break;
-      default:
-        break;
+      case MenuRsvpReader:   selectedLabel = "RSVP"; break;
+      case MenuFocusTimer:   selectedLabel = "Focus Timer"; break;
+      case MenuSettings:     selectedLabel = uiText(UiText::Settings); break;
+      case MenuSdCardCheck:  selectedLabel = "SD card check"; break;
+      case MenuCompanionSync: selectedLabel = "Companion sync"; break;
+      case MenuPowerOff:     selectedLabel = uiText(UiText::PowerOff); break;
+      default: break;
     }
     Serial.printf("[menu] selected=%s\n", selectedLabel.c_str());
   }
@@ -2803,10 +2786,14 @@ void App::selectMenuItem(uint32_t nowMs) {
   if (menuScreen_ == MenuScreen::FocusTimerSession) {
     return;
   }
+  if (menuScreen_ == MenuScreen::ReaderMenu) {
+    selectReaderMenuItem(nowMs);
+    return;
+  }
 
   switch (menuSelectedIndex_) {
-    case MenuResume:
-      setState(AppState::Paused, nowMs);
+    case MenuRsvpReader:
+      openReaderMenu();
       return;
     case MenuPowerOff:
       enterPowerOff(nowMs);
@@ -2829,28 +2816,49 @@ void App::selectMenuItem(uint32_t nowMs) {
     case MenuSdCardCheck:
       runSdCardCheck(nowMs);
       return;
-    case MenuRssFeeds:
-      runRssFeedCheck(nowMs);
-      return;
 #if RSVP_USB_TRANSFER_ENABLED
     case MenuUsbTransfer:
       enterUsbTransfer(nowMs);
       return;
 #endif
-    case MenuChapters:
-      openChapterPicker();
-      return;
-    case MenuBooks:
-      openBookPicker(false);
-      return;
-    case MenuArticles:
-      openBookPicker(true);
-      return;
     case MenuFocusTimer:
       openFocusTimer();
       return;
     case MenuSettings:
       openSettings();
+      return;
+    default:
+      return;
+  }
+}
+
+void App::openReaderMenu() {
+  menuScreen_ = MenuScreen::ReaderMenu;
+  menuSelectedIndex_ = ReaderMenuResume;
+  renderMenu();
+}
+
+void App::selectReaderMenuItem(uint32_t nowMs) {
+  switch (menuSelectedIndex_) {
+    case ReaderMenuBack:
+      menuScreen_ = MenuScreen::Main;
+      menuSelectedIndex_ = MenuRsvpReader;
+      renderMenu();
+      return;
+    case ReaderMenuResume:
+      setState(AppState::Paused, nowMs);
+      return;
+    case ReaderMenuChapters:
+      openChapterPicker();
+      return;
+    case ReaderMenuBooks:
+      openBookPicker(false);
+      return;
+    case ReaderMenuArticles:
+      openBookPicker(true);
+      return;
+    case ReaderMenuRssFeeds:
+      runRssFeedCheck(nowMs);
       return;
     default:
       return;
@@ -4794,9 +4802,11 @@ void App::renderTennisCanvas() {
   display_.musicBegin();
   display_.musicFillRect(0, 0, kTLW, kTLH, kTBg);
 
-  // UNDO bar
-  display_.musicFillRect(0, kTUndoY, kTLW, kTLH - kTUndoY, kTUndo);
-  display_.musicDrawText("< UNDO", (kTLW - 72) / 2, kTUndoY + 2, kTDim, 2);
+  // Bottom bar: UNDO (left half) | NEW (right half)
+  display_.musicFillRect(0,          kTUndoY, kTLW / 2, kTLH - kTUndoY, kTUndo);
+  display_.musicFillRect(kTLW / 2,   kTUndoY, kTLW / 2, kTLH - kTUndoY, 0x1082);
+  display_.musicDrawText("< UNDO", 16, kTUndoY + 2, kTDim, 2);
+  display_.musicDrawText("NEW GAME", kTLW / 2 + 16, kTUndoY + 2, kTDim, 2);
 
   // Horizontal divider between player rows
   display_.musicFillRect(0, kTDivY, kTLW, 1, kTLine);
@@ -4917,14 +4927,17 @@ void App::tennisUndo() {
   }
 }
 
+void App::tennisRestartGame() {
+  tennis_ = TennisGameState{};
+  tennisHistory_.clear();
+  tennisSetupDone_ = false;
+}
+
 void App::enterTennisApp(uint32_t nowMs) {
   touch_.cancel();
   pausedTouch_.active = false;
   pausedTouchIntent_ = TouchIntent::None;
   wpmFeedbackVisible_ = false;
-  tennis_ = TennisGameState{};
-  tennisHistory_.clear();
-  tennisSetupDone_ = false;
   setState(AppState::TennisApp, nowMs);
   renderTennisCanvas();
 }
@@ -6002,6 +6015,8 @@ void App::renderMenu() {
     renderFocusTimerGenres();
   } else if (menuScreen_ == MenuScreen::FocusTimerSession) {
     renderFocusTimerSession();
+  } else if (menuScreen_ == MenuScreen::ReaderMenu) {
+    renderReaderMenu();
   } else {
     renderMainMenu();
   }
@@ -6010,14 +6025,10 @@ void App::renderMenu() {
 void App::renderMainMenu() {
   std::vector<String> items;
   items.reserve(MenuItemCount);
-  items.push_back(uiText(UiText::Resume));
-  items.push_back(uiText(UiText::Chapters));
-  items.push_back("Books");
-  items.push_back("Articles");
+  items.push_back("RSVP");
   items.push_back("Focus Timer");
   items.push_back(uiText(UiText::Settings));
   items.push_back("SD card check");
-  items.push_back("RSS feeds");
   items.push_back("Companion sync");
   items.push_back("Bitcoin");
   items.push_back("Road Fighter");
@@ -6027,6 +6038,17 @@ void App::renderMainMenu() {
   items.push_back(uiText(UiText::UsbTransfer));
 #endif
   items.push_back(uiText(UiText::PowerOff));
+  display_.renderMenu(items, menuSelectedIndex_);
+}
+
+void App::renderReaderMenu() {
+  std::vector<String> items;
+  items.push_back("< Back");
+  items.push_back(uiText(UiText::Resume));
+  items.push_back(uiText(UiText::Chapters));
+  items.push_back("Books");
+  items.push_back("Articles");
+  items.push_back("RSS feeds");
   display_.renderMenu(items, menuSelectedIndex_);
 }
 

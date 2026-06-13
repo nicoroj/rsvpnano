@@ -94,6 +94,7 @@ class App {
 
   enum class MenuScreen {
     Main,
+    ReaderMenu,
     SettingsHome,
     SettingsDisplay,
     SettingsPacing,
@@ -337,6 +338,10 @@ class App {
   void renderTennisCanvas();
   void tennisScorePoint(int player);
   void tennisUndo();
+  void tennisRestartGame();
+  void openReaderMenu();
+  void renderReaderMenu();
+  void selectReaderMenuItem(uint32_t nowMs);
 
   void enterCompanionSync(uint32_t nowMs);
   void updateCompanionSync(uint32_t nowMs);
