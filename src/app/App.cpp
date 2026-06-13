@@ -1934,7 +1934,10 @@ void App::handleTouch(uint32_t nowMs) {
 
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::Standby ||
-      state_ == AppState::Sleeping) {
+      state_ == AppState::Sleeping ||
+      state_ == AppState::CompanionSync ||
+      state_ == AppState::BitcoinTicker ||
+      state_ == AppState::RoadFighterGame) {
     touch_.cancel();
     pausedTouch_.active = false;
     pausedTouchIntent_ = TouchIntent::None;

@@ -7,7 +7,7 @@
 
 namespace {
 
-constexpr int kSpiFrequency = 40000000;
+constexpr int kSpiFrequency = 60000000;
 constexpr int kSendBufferPixels = 0x4000;
 static const char *kAxs15231bTag = "axs15231b";
 

@@ -23,6 +23,7 @@ class RoadFighter {
   struct Enemy {
     int16_t  x      = 0;
     int16_t  y      = 0;
+    float    yf     = 0.0f;  // sub-pixel position, advanced with delta-time
     uint16_t color  = 0;
     uint8_t  speed  = 0;
     bool     active = false;
@@ -37,11 +38,15 @@ class RoadFighter {
   static constexpr int kEnemyH      = 32;
   static constexpr int kMaxEnemies  = 5;
   static constexpr int kBaseSpeed   = 5;
-  static constexpr int kMaxMoveSpeed = 7;  // px/frame at full tilt
-  static constexpr uint32_t kFrameMs = 60;
+  static constexpr int kMaxMoveSpeed = 7;  // px at the reference frame interval, at full tilt
+  static constexpr uint32_t kFrameMs    = 33;  // ~30 fps update/render cap (was 60)
+  static constexpr uint32_t kRefFrameMs = 60;  // interval the motion constants were tuned at
 
   int16_t  playerX_     = 0;
+  float    playerXf_    = 0.0f;  // sub-pixel player position
   int32_t  roadOffset_  = 0;
+  float    roadOffsetF_ = 0.0f;  // sub-pixel road scroll accumulator
+  float    scoreAccum_  = 0.0f;  // fractional survival-score carry
   uint32_t score_       = 0;
   uint32_t lastFrameMs_ = 0;
   uint32_t lastSpawnMs_ = 0;

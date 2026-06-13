@@ -32,7 +32,10 @@ void RoadFighter::begin() {
 
 void RoadFighter::reset() {
   playerX_     = W / 2 - kPlayerW / 2;
+  playerXf_    = (float)playerX_;
   roadOffset_  = 0;
+  roadOffsetF_ = 0.0f;
+  scoreAccum_  = 0.0f;
   score_       = 0;
   lastFrameMs_ = 0;
   lastSpawnMs_ = 0;
@@ -61,6 +64,7 @@ void RoadFighter::spawnEnemy() {
     const int cx   = kRoadLeft + 20 + lane * 40;
     e.x      = (int16_t)(cx - kEnemyW / 2);
     e.y      = (int16_t)(-kEnemyH);
+    e.yf     = (float)e.y;
     e.color  = kEnemyColors[nextRng() % 5];
     e.speed  = (uint8_t)(currentSpeed() + (int)(nextRng() % 3));
     e.active = true;
@@ -79,30 +83,38 @@ bool RoadFighter::overlaps(int ax, int ay, int aw, int ah,
 void RoadFighter::update(uint32_t nowMs, float steer) {
   if (gameOver_) return;
   if (lastFrameMs_ == 0) { lastFrameMs_ = nowMs; return; }
-  if (nowMs - lastFrameMs_ < kFrameMs) return;
+  const uint32_t dt = nowMs - lastFrameMs_;
+  if (dt < kFrameMs) return;
   lastFrameMs_ = nowMs;
+
+  // Scale all per-frame motion by elapsed time relative to the interval the
+  // motion constants were tuned at, so game speed is independent of frame rate.
+  const float factor = (float)dt / (float)kRefFrameMs;
 
   // Proportional steering from accelerometer tilt (dead zone ±0.08)
   static constexpr float kDeadZone  = 0.08f;
   static constexpr float kFullTilt  = 0.65f;  // tilt beyond this = max speed
   if (fabsf(steer) > kDeadZone) {
     const float norm = std::min(1.0f, (fabsf(steer) - kDeadZone) / (kFullTilt - kDeadZone));
-    const int   px   = (int)(kMaxMoveSpeed * norm);
+    const float px   = kMaxMoveSpeed * norm * factor;
     if (steer < 0.0f) {
-      playerX_ = (int16_t)std::max(kRoadLeft + 3, (int)playerX_ - px);
+      playerXf_ = std::max((float)(kRoadLeft + 3), playerXf_ - px);
     } else {
-      playerX_ = (int16_t)std::min(kRoadRight - kPlayerW - 3, (int)playerX_ + px);
+      playerXf_ = std::min((float)(kRoadRight - kPlayerW - 3), playerXf_ + px);
     }
+    playerX_ = (int16_t)lroundf(playerXf_);
   }
 
   // Scroll road
   const int spd = currentSpeed();
-  roadOffset_ += spd;
+  roadOffsetF_ += spd * factor;
+  roadOffset_ = (int32_t)roadOffsetF_;
 
   // Advance enemies
   for (auto& e : enemies_) {
     if (!e.active) continue;
-    e.y = (int16_t)(e.y + e.speed);
+    e.yf += e.speed * factor;
+    e.y = (int16_t)e.yf;
     if (e.y > H) {
       e.active = false;
       score_ += 10;
@@ -116,7 +128,13 @@ void RoadFighter::update(uint32_t nowMs, float steer) {
     lastSpawnMs_ = nowMs;
   }
 
-  score_++;
+  // Survival score accrues with elapsed time (was +1 per fixed frame).
+  scoreAccum_ += factor;
+  if (scoreAccum_ >= 1.0f) {
+    const uint32_t inc = (uint32_t)scoreAccum_;
+    score_ += inc;
+    scoreAccum_ -= (float)inc;
+  }
 
   // Collision
   for (const auto& e : enemies_) {
