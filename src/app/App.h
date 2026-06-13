@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "app/AppState.h"
+#include "audio/BluetoothPlayer.h"
 #include "game/RoadFighter.h"
 #include "app/Localization.h"
 #include "audio/AudioManager.h"
@@ -310,6 +311,10 @@ class App {
   void enterRoadFighter(uint32_t nowMs);
   void updateRoadFighter(uint32_t nowMs);
   void exitRoadFighter(uint32_t nowMs);
+  void enterBluetoothPlayer(uint32_t nowMs);
+  void updateBluetoothPlayer(uint32_t nowMs);
+  void exitBluetoothPlayer(uint32_t nowMs);
+  void renderBluetoothPlayer();
 
   void enterCompanionSync(uint32_t nowMs);
   void updateCompanionSync(uint32_t nowMs);
@@ -488,6 +493,9 @@ class App {
   MenuScreen menuScreen_ = MenuScreen::Main;
   MenuScreen restartConfirmReturnScreen_ = MenuScreen::Main;
   RoadFighter roadFighter_;
+  BluetoothPlayer btPlayer_;
+  int btLastRenderedTrackIndex_ = -1;
+  bool btLastRenderedPlaying_ = false;
   QueueHandle_t otaCheckQueue_ = nullptr;
   QueueHandle_t bitcoinQueue_ = nullptr;
   BitcoinResult bitcoinResult_;

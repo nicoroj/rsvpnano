@@ -98,6 +98,7 @@ enum MenuItem : size_t {
   MenuCompanionSync,
   MenuBitcoinTicker,
   MenuRoadFighter,
+  MenuBluetoothPlayer,
 #if RSVP_USB_TRANSFER_ENABLED
   MenuUsbTransfer,
 #endif
@@ -863,6 +864,8 @@ const char *App::stateName(AppState state) const {
       return "BitcoinTicker";
     case AppState::RoadFighterGame:
       return "RoadFighter";
+    case AppState::BluetoothPlayer:
+      return "BluetoothPlayer";
     case AppState::UsbTransfer:
       return "UsbTransfer";
     case AppState::Standby:
@@ -932,6 +935,9 @@ void App::setState(AppState nextState, uint32_t nowMs) {
       break;
     case AppState::RoadFighterGame:
       break;
+    case AppState::BluetoothPlayer:
+      display_.renderStatus("Music", "Loading...", "");
+      break;
     case AppState::UsbTransfer:
       display_.renderStatus("USB", "Preparing SD", "Eject when done");
       break;
@@ -985,6 +991,11 @@ void App::updateState(uint32_t nowMs) {
 
   if (state_ == AppState::RoadFighterGame) {
     updateRoadFighter(nowMs);
+    return;
+  }
+
+  if (state_ == AppState::BluetoothPlayer) {
+    updateBluetoothPlayer(nowMs);
     return;
   }
 
@@ -1056,7 +1067,7 @@ void App::maybeSaveReadingPosition(uint32_t nowMs) {
 bool App::handleStandbyCombo(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
-      state_ == AppState::RoadFighterGame ||
+      state_ == AppState::RoadFighterGame || state_ == AppState::BluetoothPlayer ||
       state_ == AppState::Sleeping || powerOffStarted_ || !bootButtonReleasedSinceBoot_ ||
       !powerButtonReleasedSinceBoot_) {
     return false;
@@ -1127,7 +1138,7 @@ void App::handleBootButton(uint32_t nowMs) {
 
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
-      state_ == AppState::RoadFighterGame ||
+      state_ == AppState::RoadFighterGame || state_ == AppState::BluetoothPlayer ||
       state_ == AppState::Sleeping || powerOffStarted_) {
     return;
   }
@@ -1974,6 +1985,25 @@ void App::handleTouch(uint32_t nowMs) {
     if (ev.phase == TouchPhase::End && roadFighter_.isGameOver()) {
       roadFighter_.reset();
     }
+  } else if (state_ == AppState::BluetoothPlayer) {
+    if (ev.phase == TouchPhase::Start) {
+      pausedTouch_.active = true;
+      pausedTouch_.startX = ev.x;
+      pausedTouch_.startY = ev.y;
+    } else if (ev.phase == TouchPhase::End && pausedTouch_.active) {
+      pausedTouch_.active = false;
+      const int dX = (int)ev.x - (int)pausedTouch_.startX;
+      const int dY = (int)ev.y - (int)pausedTouch_.startY;
+      if (abs(dY) >= static_cast<int>(kSwipeThresholdPx) &&
+          abs(dY) > abs(dX) + static_cast<int>(kAxisBiasPx)) {
+        if (dY > 0) btPlayer_.next(); else btPlayer_.prev();
+        renderBluetoothPlayer();
+      } else if (abs(dX) <= static_cast<int>(kTapSlopPx) &&
+                 abs(dY) <= static_cast<int>(kTapSlopPx)) {
+        btPlayer_.togglePlayPause();
+        renderBluetoothPlayer();
+      }
+    }
   } else {
     applyPausedTouchGesture(ev, nowMs);
   }
@@ -2659,6 +2689,9 @@ void App::selectMenuItem(uint32_t nowMs) {
       return;
     case MenuRoadFighter:
       enterRoadFighter(nowMs);
+      return;
+    case MenuBluetoothPlayer:
+      enterBluetoothPlayer(nowMs);
       return;
     case MenuSdCardCheck:
       runSdCardCheck(nowMs);
@@ -4351,6 +4384,75 @@ void App::exitRoadFighter(uint32_t nowMs) {
 
 // ── End Road Fighter game ─────────────────────────────────────────────────────
 
+// ── Bluetooth MP3 player ──────────────────────────────────────────────────────
+
+void App::enterBluetoothPlayer(uint32_t nowMs) {
+  Serial.println("[music] entering music player");
+  saveReadingPosition(true);
+  touch_.cancel();
+  pausedTouch_.active = false;
+  pausedTouchIntent_ = TouchIntent::None;
+  wpmFeedbackVisible_ = false;
+  btLastRenderedTrackIndex_ = -1;
+  btLastRenderedPlaying_ = false;
+  audio_.releaseI2s();
+  btPlayer_.begin();
+  setState(AppState::BluetoothPlayer, nowMs);
+}
+
+void App::renderBluetoothPlayer() {
+  if (btPlayer_.hasNoTracks()) {
+    display_.renderStatus("Music", "No tracks found", "Add .mp3 to /music");
+    return;
+  }
+  String posLine = (btPlayer_.isPlaying() ? "> " : "|| ") +
+                   String(btPlayer_.trackIndex() + 1) + " / " +
+                   String(btPlayer_.trackCount());
+  display_.renderStatus("Music", btPlayer_.trackDisplayName(), posLine);
+}
+
+void App::updateBluetoothPlayer(uint32_t nowMs) {
+  btPlayer_.loop();
+
+  // Long-hold BOOT (2 s) = exit
+  if (button_.isHeld() && button_.heldDurationMs(nowMs) >= 2000) {
+    exitBluetoothPlayer(nowMs);
+    return;
+  }
+
+  // Short BOOT release = toggle play/pause
+  if (button_.wasReleasedEvent() && button_.lastHoldDurationMs() < 2000) {
+    btPlayer_.togglePlayPause();
+    renderBluetoothPlayer();
+    return;
+  }
+
+  // Power button = exit
+  if (powerButton_.wasReleasedEvent() && powerButton_.lastHoldDurationMs() < 1500) {
+    exitBluetoothPlayer(nowMs);
+    return;
+  }
+
+  // Re-render when track or play state changes
+  const int idx = btPlayer_.trackIndex();
+  const bool playing = btPlayer_.isPlaying();
+  if (idx != btLastRenderedTrackIndex_ || playing != btLastRenderedPlaying_) {
+    btLastRenderedTrackIndex_ = idx;
+    btLastRenderedPlaying_ = playing;
+    renderBluetoothPlayer();
+  }
+}
+
+void App::exitBluetoothPlayer(uint32_t nowMs) {
+  Serial.println("[music] leaving music player");
+  btPlayer_.stop();
+  audio_.reclaimI2s();
+  menuScreen_ = MenuScreen::Main;
+  setState(AppState::Menu, nowMs);
+}
+
+// ── End Bluetooth MP3 player ──────────────────────────────────────────────────
+
 void App::enterCompanionSync(uint32_t nowMs) {
   if (blockNetworkActionForOtaCheck("Sync", nowMs)) {
     return;
@@ -5423,6 +5525,7 @@ void App::renderMainMenu() {
   items.push_back("Companion sync");
   items.push_back("Bitcoin");
   items.push_back("Road Fighter");
+  items.push_back("Music");
 #if RSVP_USB_TRANSFER_ENABLED
   items.push_back(uiText(UiText::UsbTransfer));
 #endif

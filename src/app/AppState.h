@@ -11,4 +11,5 @@ enum class AppState {
   Sleeping,
   BitcoinTicker,
   RoadFighterGame,
+  BluetoothPlayer,
 };

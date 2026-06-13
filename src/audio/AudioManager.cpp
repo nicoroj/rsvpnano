@@ -100,6 +100,17 @@ bool AudioManager::beep() {
 
 bool AudioManager::available() const { return available_; }
 
+void AudioManager::releaseI2s() {
+  if (i2sInitialized_) {
+    i2s_driver_uninstall(kI2sPort);
+    i2sInitialized_ = false;
+  }
+}
+
+bool AudioManager::reclaimI2s() {
+  return initI2s();
+}
+
 bool AudioManager::enableAudioRail() {
   uint8_t direction = 0xFF;
   uint8_t output = 0xFF;
