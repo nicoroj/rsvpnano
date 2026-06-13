@@ -39,16 +39,18 @@ constexpr uint16_t kAxisBiasPx = 12;
 constexpr uint16_t kTapSlopPx = 26;
 constexpr int kMenuScrollPixelsPerItem = 50;
 
-// Music player canvas layout (172 × 640 portrait)
-constexpr int kMusicW   = 172;
-constexpr int kMusicH   = 640;
-constexpr int kBtnY     = 420;
-constexpr int kPrevCX   = 30;
-constexpr int kPlayCX   = 86;
-constexpr int kNextCX   = 142;
-constexpr int kPrevR    = 26;
-constexpr int kPlayR    = 34;
-constexpr int kTopZone  = 48;
+// Music player layout (640 × 172 landscape)
+constexpr int kMusicLW  = 640;  // landscape width
+constexpr int kMusicLH  = 172;  // landscape height
+constexpr int kMTopH    = 42;   // top-bar height
+constexpr int kMBtnCY   = 88;   // button vertical center
+constexpr int kMPrevX   = 140;  // PREV button horizontal center
+constexpr int kMPlayX   = 320;  // PLAY button horizontal center
+constexpr int kMNextX   = 500;  // NEXT button horizontal center
+constexpr int kMPrevR   = 30;   // PREV/NEXT radius
+constexpr int kMPlayR   = 38;   // PLAY radius
+constexpr int kMListTop = 44;   // track-list: y where items start
+constexpr int kMItemH   = 20;   // track-list: item row height
 constexpr uint16_t kReaderDoubleTapSlopPx = 92;
 constexpr uint16_t kPreviousSentenceTapWidthPx = 96;
 constexpr uint16_t kPreviousSentenceTapHeightPx = 60;
@@ -2027,14 +2029,12 @@ void App::handleTouch(uint32_t nowMs) {
       if (btTrackListVisible_) {
         // ── Track list interaction ─────────────────────────
         if (isTap) {
-          if (sy < kTopZone) {
+          if (sy < kMTopH) {
             // Tap header → back to main player
             btTrackListVisible_ = false;
             renderMusicCanvas();
           } else {
-            // Tap a track to play it
-            constexpr int kItemH = 38;
-            int idx = btTrackListScroll_ + (sy - kTopZone - 4) / kItemH;
+            int idx = btTrackListScroll_ + (sy - kMListTop) / kMItemH;
             if (idx >= 0 && idx < btPlayer_.trackCount()) {
               btPlayer_.playTrack(idx);
               btTrackListVisible_ = false;
@@ -2042,7 +2042,8 @@ void App::handleTouch(uint32_t nowMs) {
             }
           }
         } else if (isSwipeY) {
-          int maxScroll = std::max(0, btPlayer_.trackCount() - (kMusicH - kTopZone - 4) / 38);
+          int visibleItems = (kMusicLH - kMListTop) / kMItemH;
+          int maxScroll = std::max(0, btPlayer_.trackCount() - visibleItems);
           if (dY < 0) btTrackListScroll_ = std::min(btTrackListScroll_ + 1, maxScroll);
           else        btTrackListScroll_ = std::max(btTrackListScroll_ - 1, 0);
           renderMusicTrackList();
@@ -2052,31 +2053,31 @@ void App::handleTouch(uint32_t nowMs) {
 
       // ── Main player interaction ────────────────────────────
       if (isTap) {
-        // Top bar zones
-        if (sy < kTopZone) {
+        if (sy < kMTopH) {
+          // Top-bar zone: folder icon (left) or sun icon (right)
           if (sx < 50) {
-            // Folder icon → show track list
             btTrackListScroll_ = 0;
             btTrackListVisible_ = true;
             renderMusicTrackList();
-          } else if (sx > 122) {
-            // Brightness icon → turn off display
+          } else if (sx > 590) {
             btDisplayOff_ = true;
             display_.setBrightnessPercent(0);
           }
           return;
         }
-        // Button hit test (rough circle)
+        // Button hit test using landscape coordinates (ev.x / ev.y)
         auto dist2 = [](int ax, int ay, int bx, int by) {
           return (ax-bx)*(ax-bx) + (ay-by)*(ay-by);
         };
-        if (dist2(sx, sy, kPrevCX, kBtnY) < (kPrevR+8)*(kPrevR+8)) {
+        constexpr int kPrevHit = kMPrevR + 8;
+        constexpr int kPlayHit = kMPlayR + 8;
+        if (dist2(sx, sy, kMPrevX, kMBtnCY) < kPrevHit * kPrevHit) {
           btPlayer_.prev();
           renderMusicCanvas();
-        } else if (dist2(sx, sy, kPlayCX, kBtnY) < (kPlayR+8)*(kPlayR+8)) {
+        } else if (dist2(sx, sy, kMPlayX, kMBtnCY) < kPlayHit * kPlayHit) {
           btPlayer_.togglePlayPause();
           renderMusicCanvas();
-        } else if (dist2(sx, sy, kNextCX, kBtnY) < (kPrevR+8)*(kPrevR+8)) {
+        } else if (dist2(sx, sy, kMNextX, kMBtnCY) < kPrevHit * kPrevHit) {
           btPlayer_.next();
           renderMusicCanvas();
         }
@@ -4469,48 +4470,54 @@ void App::exitRoadFighter(uint32_t nowMs) {
 // ── Music Player canvas UI ────────────────────────────────────────────────────
 
 namespace {
-constexpr uint16_t kMusicBg      = 0x0000;
-constexpr uint16_t kMusicBar     = 0x18E3;
-constexpr uint16_t kMusicBtnBg   = 0x2124;
-constexpr uint16_t kMusicRing    = 0x7BCF;
-constexpr uint16_t kMusicWhite   = 0xFFFF;
-constexpr uint16_t kMusicDim     = 0x4A69;
-constexpr uint16_t kMusicGreen   = 0x07E0;
-constexpr uint16_t kMusicAccent  = 0xFD20;
+constexpr uint16_t kMusicBg     = 0x0000;
+constexpr uint16_t kMusicBar    = 0x18E3;
+constexpr uint16_t kMusicBtnBg  = 0x2124;
+constexpr uint16_t kMusicRing   = 0x7BCF;
+constexpr uint16_t kMusicWhite  = 0xFFFF;
+constexpr uint16_t kMusicDim    = 0x4A69;
+constexpr uint16_t kMusicGreen  = 0x07E0;
+constexpr uint16_t kMusicAccent = 0xFD20;
+
+// All helpers below use landscape coordinates (x=0..639 left-right, y=0..171 top-bottom).
 
 void musicCircle(DisplayManager& d, int cx, int cy, int r, uint16_t color) {
-  for (int dy = -r; dy <= r; dy++) {
-    int hw = (int)sqrtf((float)(r * r - dy * dy));
-    d.gameFillRect(cx - hw, cy + dy, 2 * hw + 1, 1, color);
+  for (int dx = -r; dx <= r; dx++) {
+    int hw = (int)sqrtf((float)(r * r - dx * dx));
+    d.musicFillRect(cx + dx, cy - hw, 1, 2 * hw + 1, color);
   }
 }
 
+// Right-pointing triangle ▶
 void musicPlayIcon(DisplayManager& d, int cx, int cy, uint16_t col) {
-  for (int dy = -12; dy <= 12; dy++) {
-    int w = 13 - abs(dy);
-    d.gameFillRect(cx - 5, cy + dy, w, 1, col);
+  for (int dx = -13; dx <= 13; dx++) {
+    int hw = (int)((14 - dx) * 13.0f / 26.0f);
+    if (hw > 0) d.musicFillRect(cx + dx, cy - hw, 1, 2 * hw + 1, col);
   }
 }
 
+// Two vertical bars ‖
 void musicPauseIcon(DisplayManager& d, int cx, int cy, uint16_t col) {
-  d.gameFillRect(cx - 9, cy - 12, 6, 24, col);
-  d.gameFillRect(cx + 3, cy - 12, 6, 24, col);
+  d.musicFillRect(cx - 10, cy - 13, 8, 26, col);
+  d.musicFillRect(cx + 2,  cy - 13, 8, 26, col);
 }
 
+// Vertical bar + left-pointing triangle |◀
 void musicPrevIcon(DisplayManager& d, int cx, int cy, uint16_t col) {
-  d.gameFillRect(cx - 8, cy - 12, 4, 24, col);   // vertical bar
-  for (int dy = -10; dy <= 10; dy++) {            // left-pointing triangle
-    int w = 11 - abs(dy);
-    d.gameFillRect(cx - 2, cy + dy, w, 1, col);
+  d.musicFillRect(cx - 14, cy - 13, 5, 26, col);
+  for (int dx = -2; dx <= 12; dx++) {
+    int hw = (int)((dx + 2) * 13.0f / 14.0f);
+    if (hw > 0) d.musicFillRect(cx + dx, cy - hw, 1, 2 * hw + 1, col);
   }
 }
 
+// Right-pointing triangle + vertical bar ▶|
 void musicNextIcon(DisplayManager& d, int cx, int cy, uint16_t col) {
-  d.gameFillRect(cx + 4, cy - 12, 4, 24, col);   // vertical bar
-  for (int dy = -10; dy <= 10; dy++) {            // right-pointing triangle
-    int w = 11 - abs(dy);
-    d.gameFillRect(cx - 9, cy + dy, w, 1, col);
+  for (int dx = -12; dx <= 2; dx++) {
+    int hw = (int)((2 - dx) * 13.0f / 14.0f);
+    if (hw > 0) d.musicFillRect(cx + dx, cy - hw, 1, 2 * hw + 1, col);
   }
+  d.musicFillRect(cx + 9, cy - 13, 5, 26, col);
 }
 
 String musicTruncate(String s, int maxChars) {
@@ -4523,111 +4530,103 @@ String musicTruncate(String s, int maxChars) {
 }  // namespace
 
 void App::renderMusicCanvas() {
-  display_.gameBegin();
-  display_.gameFillRect(0, 0, kMusicW, kMusicH, kMusicBg);
+  display_.musicBegin();
 
-  // ── Top icon bar ────────────────────────────────────────
-  display_.gameFillRect(0, 0, kMusicW, kTopZone, kMusicBar);
+  // Background
+  display_.musicFillRect(0, 0, kMusicLW, kMusicLH, kMusicBg);
 
-  // Folder / track list button (top-left)
-  display_.gameFillRect(7, 9, 30, 30, kMusicBtnBg);
-  display_.gameFillRect(11, 16, 22, 2, kMusicWhite);
-  display_.gameFillRect(11, 22, 22, 2, kMusicWhite);
-  display_.gameFillRect(11, 28, 22, 2, kMusicWhite);
+  // ── Top bar ──────────────────────────────────────────────
+  display_.musicFillRect(0, 0, kMusicLW, kMTopH, kMusicBar);
 
-  // Backlight-off button (top-right) — sun asterisk
-  display_.gameFillRect(135, 9, 30, 30, kMusicBtnBg);
-  display_.gameFillRect(149, 13, 2, 14, kMusicWhite);  // vertical ray
-  display_.gameFillRect(143, 22, 14, 2, kMusicWhite);  // horizontal ray
-  display_.gameFillRect(144, 14, 3, 3, kMusicWhite);   // NW ray
-  display_.gameFillRect(153, 14, 3, 3, kMusicWhite);   // NE ray
-  display_.gameFillRect(144, 31, 3, 3, kMusicWhite);   // SW ray
-  display_.gameFillRect(153, 31, 3, 3, kMusicWhite);   // SE ray
+  // Folder / track-list button (top-left, 30×30)
+  constexpr int kFolX = 5, kFolY = 6;
+  display_.musicFillRect(kFolX, kFolY, 30, 30, kMusicBtnBg);
+  display_.musicFillRect(kFolX + 5, kFolY + 7,  20, 3, kMusicWhite);
+  display_.musicFillRect(kFolX + 5, kFolY + 13, 20, 3, kMusicWhite);
+  display_.musicFillRect(kFolX + 5, kFolY + 19, 20, 3, kMusicWhite);
 
-  // ── Track info ──────────────────────────────────────────
+  // Backlight-off button (top-right, 30×30) — sun asterisk
+  constexpr int kSunX = 605, kSunY = 6;
+  display_.musicFillRect(kSunX, kSunY, 30, 30, kMusicBtnBg);
+  display_.musicFillRect(kSunX + 13, kSunY + 4,  4, 22, kMusicWhite);  // vertical ray
+  display_.musicFillRect(kSunX + 4,  kSunY + 13, 22, 4, kMusicWhite);  // horizontal ray
+  display_.musicFillRect(kSunX + 5,  kSunY + 5,  4,  4, kMusicWhite);  // NW dot
+  display_.musicFillRect(kSunX + 21, kSunY + 5,  4,  4, kMusicWhite);  // NE dot
+  display_.musicFillRect(kSunX + 5,  kSunY + 21, 4,  4, kMusicWhite);  // SW dot
+  display_.musicFillRect(kSunX + 21, kSunY + 21, 4,  4, kMusicWhite);  // SE dot
+
+  // ── Track info ───────────────────────────────────────────
   if (btPlayer_.hasNoTracks()) {
-    display_.gameDrawText("NO TRACKS", 14, 260, kMusicWhite, 2);
-    display_.gameDrawText("ADD .MP3 TO /MUSIC", 1, 292, kMusicDim, 1);
+    display_.musicDrawText("NO TRACKS — ADD .MP3 TO /MUSIC ON SD CARD", 46, 15, kMusicWhite, 1);
   } else {
-    // Track name — max 13 chars at scale 2 (12px each = 156px)
-    String name = musicTruncate(btPlayer_.trackDisplayName(), 13);
-    int nameX = (kMusicW - (int)name.length() * 12) / 2;
-    display_.gameDrawText(name.c_str(), nameX, 230, kMusicWhite, 2);
+    String name = musicTruncate(btPlayer_.trackDisplayName(), 36);
+    display_.musicDrawText(name.c_str(), 46, 14, kMusicWhite, 2);
 
-    // Track position
-    String pos = String(btPlayer_.trackIndex() + 1) + " / " + String(btPlayer_.trackCount());
-    int posX = (kMusicW - (int)pos.length() * 6) / 2;
-    display_.gameDrawText(pos.c_str(), posX, 260, kMusicDim, 1);
+    String pos = String(btPlayer_.trackIndex() + 1) + "/" + String(btPlayer_.trackCount());
+    int posX = 592 - (int)pos.length() * 12;
+    display_.musicDrawText(pos.c_str(), posX, 14, kMusicDim, 2);
   }
 
   // ── Control buttons ──────────────────────────────────────
-  // PREV
-  musicCircle(display_, kPrevCX, kBtnY, kPrevR + 2, kMusicRing);
-  musicCircle(display_, kPrevCX, kBtnY, kPrevR,     kMusicBtnBg);
-  musicPrevIcon(display_, kPrevCX, kBtnY, kMusicWhite);
+  musicCircle(display_, kMPrevX, kMBtnCY, kMPrevR + 2, kMusicRing);
+  musicCircle(display_, kMPrevX, kMBtnCY, kMPrevR,     kMusicBtnBg);
+  musicPrevIcon(display_, kMPrevX, kMBtnCY, kMusicWhite);
 
-  // PLAY / PAUSE (larger)
-  musicCircle(display_, kPlayCX, kBtnY, kPlayR + 3, kMusicWhite);
-  musicCircle(display_, kPlayCX, kBtnY, kPlayR,     kMusicBtnBg);
+  musicCircle(display_, kMPlayX, kMBtnCY, kMPlayR + 3, kMusicWhite);
+  musicCircle(display_, kMPlayX, kMBtnCY, kMPlayR,     kMusicBtnBg);
   if (btPlayer_.isPlaying()) {
-    musicPauseIcon(display_, kPlayCX, kBtnY, kMusicWhite);
+    musicPauseIcon(display_, kMPlayX, kMBtnCY, kMusicWhite);
   } else {
-    musicPlayIcon(display_, kPlayCX, kBtnY, kMusicWhite);
+    musicPlayIcon(display_, kMPlayX, kMBtnCY, kMusicWhite);
   }
 
-  // NEXT
-  musicCircle(display_, kNextCX, kBtnY, kPrevR + 2, kMusicRing);
-  musicCircle(display_, kNextCX, kBtnY, kPrevR,     kMusicBtnBg);
-  musicNextIcon(display_, kNextCX, kBtnY, kMusicWhite);
+  musicCircle(display_, kMNextX, kMBtnCY, kMPrevR + 2, kMusicRing);
+  musicCircle(display_, kMNextX, kMBtnCY, kMPrevR,     kMusicBtnBg);
+  musicNextIcon(display_, kMNextX, kMBtnCY, kMusicWhite);
 
   // ── Volume bar ───────────────────────────────────────────
-  constexpr int kVolY = 530;
-  constexpr int kVolBarY = 546;
-  constexpr int kVolBarH = 14;
-  constexpr int kVolBarW = 150;
-  constexpr int kVolBarX = (kMusicW - kVolBarW) / 2;
+  constexpr int kVolSepY  = 132;
+  constexpr int kVolLabelY = 142;
+  constexpr int kVolBarX  = 55, kVolBarY = 141, kVolBarW = 520, kVolBarH = 18;
 
-  display_.gameDrawText("VOL", kVolBarX, kVolY, kMusicDim, 1);
+  display_.musicFillRect(0, kVolSepY, kMusicLW, 1, kMusicDim);  // separator
+  display_.musicDrawText("VOL", 10, kVolLabelY, kMusicDim, 1);
   String volStr = String(btPlayer_.volume()) + "/" + String(BluetoothPlayer::kVolumeMax);
-  display_.gameDrawText(volStr.c_str(), kVolBarX + kVolBarW - (int)volStr.length() * 6, kVolY, kMusicWhite, 1);
+  int volLabelX = 590 - (int)volStr.length() * 6;
+  display_.musicDrawText(volStr.c_str(), volLabelX, kVolLabelY, kMusicWhite, 1);
 
-  display_.gameFillRect(kVolBarX, kVolBarY, kVolBarW, kVolBarH, kMusicBtnBg);
+  display_.musicFillRect(kVolBarX, kVolBarY, kVolBarW, kVolBarH, kMusicBtnBg);
   int fillW = (btPlayer_.volume() * (kVolBarW - 2)) / BluetoothPlayer::kVolumeMax;
-  if (fillW > 0) display_.gameFillRect(kVolBarX + 1, kVolBarY + 1, fillW, kVolBarH - 2, kMusicGreen);
+  if (fillW > 0) display_.musicFillRect(kVolBarX + 1, kVolBarY + 1, fillW, kVolBarH - 2, kMusicGreen);
 
-  // Swipe hint
-  display_.gameDrawText("SWIPE UP/DOWN = VOL", 2, 572, kMusicDim, 1);
-
-  display_.gameCommit();
+  display_.musicCommit();
 }
 
 void App::renderMusicTrackList() {
-  display_.gameBegin();
-  display_.gameFillRect(0, 0, kMusicW, kMusicH, kMusicBg);
+  display_.musicBegin();
+  display_.musicFillRect(0, 0, kMusicLW, kMusicLH, kMusicBg);
 
   // Header
-  display_.gameFillRect(0, 0, kMusicW, kTopZone, kMusicBar);
-  display_.gameDrawText("TRACKS", 34, 16, kMusicWhite, 2);
+  display_.musicFillRect(0, 0, kMusicLW, kMTopH, kMusicBar);
+  display_.musicDrawText("TRACKS", 10, 14, kMusicWhite, 2);
+  display_.musicDrawText("TAP HEADER TO GO BACK", 190, 17, kMusicDim, 1);
 
   // Track list
-  constexpr int kItemH = 38;
-  constexpr int kListTop = kTopZone + 4;
   const int count = btPlayer_.trackCount();
-  const int visibleItems = (kMusicH - kListTop) / kItemH;
+  const int visibleItems = (kMusicLH - kMListTop) / kMItemH;
 
   for (int i = btTrackListScroll_; i < count && i < btTrackListScroll_ + visibleItems; i++) {
-    int yy = kListTop + (i - btTrackListScroll_) * kItemH;
+    int yy = kMListTop + (i - btTrackListScroll_) * kMItemH;
     bool isCurrent = (i == btPlayer_.trackIndex());
-
     if (isCurrent) {
-      display_.gameFillRect(0, yy, kMusicW, kItemH - 2, kMusicBtnBg);
+      display_.musicFillRect(0, yy, kMusicLW, kMItemH - 1, kMusicBtnBg);
     }
-    String name = musicTruncate(btPlayer_.trackDisplayNameAt(i), 26);
+    String name = musicTruncate(btPlayer_.trackDisplayNameAt(i), 90);
     uint16_t col = isCurrent ? kMusicAccent : kMusicWhite;
-    display_.gameDrawText(name.c_str(), 6, yy + 12, col, 1);
+    display_.musicDrawText(name.c_str(), 10, yy + 6, col, 1);
   }
 
-  display_.gameCommit();
+  display_.musicCommit();
 }
 
 void App::enterBluetoothPlayer(uint32_t nowMs) {

@@ -126,6 +126,12 @@ class DisplayManager {
   void gameDrawText(const char* text, int x, int y, uint16_t color, int scale = 2);
   void gameCommit();
 
+  // Landscape music canvas (640 × 172, same coordinate space as the normal UI).
+  void musicBegin();
+  void musicFillRect(int x, int y, int w, int h, uint16_t color);
+  void musicDrawText(const char* text, int x, int y, uint16_t color, int scale = 1);
+  void musicCommit();
+
  private:
   bool initPanel();
   bool allocateBuffers();

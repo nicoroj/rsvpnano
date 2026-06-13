@@ -3390,3 +3390,27 @@ void DisplayManager::gameCommit() {
   uiOrientation_ = savedGameOrientation_;
   lastRenderKey_ = "";
 }
+
+// ── Landscape music canvas ─────────────────────────────────────────────────────
+
+void DisplayManager::musicBegin() {
+  if (!initialized_) return;
+  clearVirtualBuffer(kDisplayWidth, kDisplayHeight);
+  lastRenderKey_ = "";
+}
+
+void DisplayManager::musicFillRect(int x, int y, int w, int h, uint16_t color) {
+  if (!initialized_) return;
+  fillVirtualRect(x, y, w, h, color);
+}
+
+void DisplayManager::musicDrawText(const char* text, int x, int y, uint16_t color, int scale) {
+  if (!initialized_) return;
+  drawTinyTextAt(String(text), x, y, color, scale);
+}
+
+void DisplayManager::musicCommit() {
+  if (!initialized_) return;
+  flushScaledFrame(1, kDisplayWidth, kDisplayHeight);
+  lastRenderKey_ = "";
+}
