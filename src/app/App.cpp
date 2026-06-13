@@ -112,6 +112,7 @@ enum MenuItem : size_t {
   MenuBitcoinTicker,
   MenuRoadFighter,
   MenuBluetoothPlayer,
+  MenuTennisApp,
 #if RSVP_USB_TRANSFER_ENABLED
   MenuUsbTransfer,
 #endif
@@ -879,6 +880,8 @@ const char *App::stateName(AppState state) const {
       return "RoadFighter";
     case AppState::BluetoothPlayer:
       return "BluetoothPlayer";
+    case AppState::TennisApp:
+      return "TennisApp";
     case AppState::UsbTransfer:
       return "UsbTransfer";
     case AppState::Standby:
@@ -951,6 +954,8 @@ void App::setState(AppState nextState, uint32_t nowMs) {
     case AppState::BluetoothPlayer:
       display_.renderStatus("Music", "Loading...", "");
       break;
+    case AppState::TennisApp:
+      break;
     case AppState::UsbTransfer:
       display_.renderStatus("USB", "Preparing SD", "Eject when done");
       break;
@@ -1009,6 +1014,11 @@ void App::updateState(uint32_t nowMs) {
 
   if (state_ == AppState::BluetoothPlayer) {
     updateBluetoothPlayer(nowMs);
+    return;
+  }
+
+  if (state_ == AppState::TennisApp) {
+    updateTennisApp(nowMs);
     return;
   }
 
@@ -1081,6 +1091,7 @@ bool App::handleStandbyCombo(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
       state_ == AppState::RoadFighterGame || state_ == AppState::BluetoothPlayer ||
+      state_ == AppState::TennisApp ||
       state_ == AppState::Sleeping || powerOffStarted_ || !bootButtonReleasedSinceBoot_ ||
       !powerButtonReleasedSinceBoot_) {
     return false;
@@ -1152,6 +1163,7 @@ void App::handleBootButton(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
       state_ == AppState::RoadFighterGame || state_ == AppState::BluetoothPlayer ||
+      state_ == AppState::TennisApp ||
       state_ == AppState::Sleeping || powerOffStarted_) {
     return;
   }
@@ -2087,6 +2099,41 @@ void App::handleTouch(uint32_t nowMs) {
         renderMusicCanvas();
       }
     }
+  } else if (state_ == AppState::TennisApp) {
+    if (ev.phase == TouchPhase::Start) {
+      pausedTouch_.active = true;
+      pausedTouch_.startX = ev.x;
+      pausedTouch_.startY = ev.y;
+    } else if (ev.phase == TouchPhase::End && pausedTouch_.active) {
+      pausedTouch_.active = false;
+      const int sy = static_cast<int>(pausedTouch_.startY);
+      const int dX = static_cast<int>(ev.x) - static_cast<int>(pausedTouch_.startX);
+      const int dY = static_cast<int>(ev.y) - static_cast<int>(pausedTouch_.startY);
+      const bool isTap = abs(dX) <= static_cast<int>(kTapSlopPx) &&
+                         abs(dY) <= static_cast<int>(kTapSlopPx);
+      const bool isSwipeLeft = dX < -static_cast<int>(kSwipeThresholdPx) &&
+                               abs(dX) > abs(dY) + static_cast<int>(kAxisBiasPx);
+
+      if (isTap || isSwipeLeft) {
+        if (isTap && sy >= 155) {
+          tennisUndo();
+          renderTennisCanvas();
+        } else if (isSwipeLeft) {
+          tennisUndo();
+          renderTennisCanvas();
+        } else if (!tennisSetupDone_) {
+          tennis_.p1Serves = (sy < 77);
+          tennisSetupDone_ = true;
+          renderTennisCanvas();
+        } else if (sy < 77) {
+          tennisScorePoint(1);
+          renderTennisCanvas();
+        } else if (sy < 155) {
+          tennisScorePoint(2);
+          renderTennisCanvas();
+        }
+      }
+    }
   } else {
     applyPausedTouchGesture(ev, nowMs);
   }
@@ -2775,6 +2822,9 @@ void App::selectMenuItem(uint32_t nowMs) {
       return;
     case MenuBluetoothPlayer:
       enterBluetoothPlayer(nowMs);
+      return;
+    case MenuTennisApp:
+      enterTennisApp(nowMs);
       return;
     case MenuSdCardCheck:
       runSdCardCheck(nowMs);
@@ -4483,7 +4533,7 @@ constexpr uint16_t kMusicAccent = 0xFD20;
 
 void musicCircle(DisplayManager& d, int cx, int cy, int r, uint16_t color) {
   for (int dx = -r; dx <= r; dx++) {
-    int hw = (int)sqrtf((float)(r * r - dx * dx));
+    int hw = (int)(sqrtf((float)(r * r - dx * dx)) + 0.5f);
     d.musicFillRect(cx + dx, cy - hw, 1, 2 * hw + 1, color);
   }
 }
@@ -4699,7 +4749,7 @@ void App::exitBluetoothPlayer(uint32_t nowMs) {
   Serial.println("[music] leaving music player");
   if (btDisplayOff_) {
     btDisplayOff_ = false;
-    display_.setBrightnessPercent(100);
+    display_.setBacklight(true);
   }
   btPlayer_.stop();
   audio_.reclaimI2s();
@@ -4708,6 +4758,196 @@ void App::exitBluetoothPlayer(uint32_t nowMs) {
 }
 
 // ── End Bluetooth MP3 player ──────────────────────────────────────────────────
+
+// ── Tennis score app ──────────────────────────────────────────────────────────
+
+namespace {
+constexpr int kTLW  = 640;
+constexpr int kTLH  = 172;
+constexpr int kTUndoY = 155;
+constexpr int kTDivY  = 77;
+constexpr int kTP1CY  = 38;
+constexpr int kTP2CY  = 116;
+constexpr int kTSetX0 = 68;
+constexpr int kTSetW  = 38;
+constexpr int kTScoreDiv = 268;
+constexpr int kTScoreX   = 280;
+
+constexpr uint16_t kTBg    = 0x0000;
+constexpr uint16_t kTLine  = 0x18E3;
+constexpr uint16_t kTWhite = 0xFFFF;
+constexpr uint16_t kTDim   = 0x4A69;
+constexpr uint16_t kTUndo  = 0x2124;
+constexpr uint16_t kTServe = 0x07E0;
+constexpr uint16_t kTDeuce = 0xFD20;
+
+String tennisPointLabel(int myPts, int oppPts, bool isTiebreak) {
+  if (isTiebreak) return String(myPts);
+  static const char* kP[] = {"0", "15", "30", "40"};
+  if (myPts < 4 && oppPts < 4) return kP[myPts];
+  if (myPts == oppPts) return "DU";
+  return (myPts > oppPts) ? "AD" : "40";
+}
+}  // namespace
+
+void App::renderTennisCanvas() {
+  display_.musicBegin();
+  display_.musicFillRect(0, 0, kTLW, kTLH, kTBg);
+
+  // UNDO bar
+  display_.musicFillRect(0, kTUndoY, kTLW, kTLH - kTUndoY, kTUndo);
+  display_.musicDrawText("< UNDO", (kTLW - 72) / 2, kTUndoY + 2, kTDim, 2);
+
+  // Horizontal divider between player rows
+  display_.musicFillRect(0, kTDivY, kTLW, 1, kTLine);
+
+  // Vertical divider separating sets from game score
+  display_.musicFillRect(kTScoreDiv, 0, 1, kTUndoY, kTLine);
+
+  if (!tennisSetupDone_) {
+    // Serve selection screen
+    display_.musicDrawText("WHO SERVES?", 5, 5, kTDim, 1);
+    display_.musicDrawText("P1", 5, kTP1CY - 7, kTWhite, 2);
+    display_.musicDrawText("TAP TO SERVE FIRST", kTScoreX, kTP1CY - 7, kTWhite, 2);
+    display_.musicDrawText("P2", 5, kTP2CY - 7, kTWhite, 2);
+    display_.musicDrawText("TAP TO SERVE FIRST", kTScoreX, kTP2CY - 7, kTWhite, 2);
+    display_.musicCommit();
+    return;
+  }
+
+  // Player names
+  display_.musicDrawText("P1", 5, kTP1CY - 7, kTWhite, 2);
+  display_.musicDrawText("P2", 5, kTP2CY - 7, kTWhite, 2);
+
+  // Serve indicator (green dot next to name of serving player)
+  if (tennis_.p1Serves) {
+    display_.musicFillRect(43, kTP1CY - 4, 8, 8, kTServe);
+  } else {
+    display_.musicFillRect(43, kTP2CY - 4, 8, 8, kTServe);
+  }
+
+  // Set scores (completed sets + current set)
+  const auto& sets = tennis_.completedSets;
+  int setColCount = (int)sets.size();
+  for (int i = 0; i < setColCount; i++) {
+    int x = kTSetX0 + i * kTSetW;
+    display_.musicDrawText(String(sets[i].p1).c_str(), x, kTP1CY - 7, kTDim, 2);
+    display_.musicDrawText(String(sets[i].p2).c_str(), x, kTP2CY - 7, kTDim, 2);
+  }
+  // Current set games (shown in white)
+  if (setColCount < 7) {
+    int x = kTSetX0 + setColCount * kTSetW;
+    display_.musicDrawText(String(tennis_.currentGames.p1).c_str(), x, kTP1CY - 7, kTWhite, 2);
+    display_.musicDrawText(String(tennis_.currentGames.p2).c_str(), x, kTP2CY - 7, kTWhite, 2);
+  }
+
+  // Current game score (large, right panel)
+  String p1pt = tennisPointLabel(tennis_.p1Points, tennis_.p2Points, tennis_.inTiebreak);
+  String p2pt = tennisPointLabel(tennis_.p2Points, tennis_.p1Points, tennis_.inTiebreak);
+
+  bool atDeuce = !tennis_.inTiebreak && tennis_.p1Points >= 3 && tennis_.p1Points == tennis_.p2Points;
+  uint16_t col1 = atDeuce ? kTDeuce : kTWhite;
+  uint16_t col2 = atDeuce ? kTDeuce : kTWhite;
+
+  // Center text in the score area (x=kTScoreX..639, width=639-kTScoreX)
+  int scoreAreaW = kTLW - kTScoreX;
+  int charAdv = 24;  // scale=4: (5+1)*4
+  auto scoreX = [&](const String& s) {
+    return kTScoreX + (scoreAreaW - (int)s.length() * charAdv + 4) / 2;
+  };
+
+  display_.musicDrawText(p1pt.c_str(), scoreX(p1pt), kTP1CY - 14, col1, 4);
+  display_.musicDrawText(p2pt.c_str(), scoreX(p2pt), kTP2CY - 14, col2, 4);
+
+  display_.musicCommit();
+}
+
+void App::tennisScorePoint(int player) {
+  tennisHistory_.push_back(tennis_);
+
+  auto& s = tennis_;
+  int& myPts  = (player == 1) ? s.p1Points : s.p2Points;
+  int& oppPts = (player == 1) ? s.p2Points : s.p1Points;
+  int& myGames  = (player == 1) ? s.currentGames.p1 : s.currentGames.p2;
+  int& oppGames = (player == 1) ? s.currentGames.p2 : s.currentGames.p1;  // NOLINT
+
+  myPts++;
+
+  bool gameWon = false;
+
+  if (s.inTiebreak) {
+    if (myPts >= 7 && myPts >= oppPts + 2) {
+      gameWon = true;
+    } else {
+      // Switch serve: 1st point then every 2 points (switch when total is odd)
+      int total = s.p1Points + s.p2Points;
+      if (total % 2 == 1) s.p1Serves = !s.p1Serves;
+    }
+  } else {
+    if (myPts >= 4 && myPts >= oppPts + 2) gameWon = true;
+  }
+
+  if (!gameWon) return;
+
+  myGames++;
+  s.p1Points = s.p2Points = 0;
+
+  if (s.inTiebreak) {
+    s.completedSets.push_back(s.currentGames);
+    s.currentGames = {};
+    s.inTiebreak = false;
+    s.p1Serves = !s.p1ServedFirstInTiebreak;
+  } else {
+    s.p1Serves = !s.p1Serves;
+    int g1 = s.currentGames.p1, g2 = s.currentGames.p2;
+    if (g1 == 6 && g2 == 6) {
+      s.inTiebreak = true;
+      s.p1ServedFirstInTiebreak = s.p1Serves;
+    } else if ((g1 >= 6 && g1 >= g2 + 2) || (g2 >= 6 && g2 >= g1 + 2)) {
+      s.completedSets.push_back(s.currentGames);
+      s.currentGames = {};
+    }
+  }
+}
+
+void App::tennisUndo() {
+  if (!tennisHistory_.empty()) {
+    tennis_ = tennisHistory_.back();
+    tennisHistory_.pop_back();
+  }
+}
+
+void App::enterTennisApp(uint32_t nowMs) {
+  touch_.cancel();
+  pausedTouch_.active = false;
+  pausedTouchIntent_ = TouchIntent::None;
+  wpmFeedbackVisible_ = false;
+  tennis_ = TennisGameState{};
+  tennisHistory_.clear();
+  tennisSetupDone_ = false;
+  setState(AppState::TennisApp, nowMs);
+  renderTennisCanvas();
+}
+
+void App::updateTennisApp(uint32_t nowMs) {
+  // Short BOOT press = exit
+  if (button_.wasReleasedEvent() && button_.lastHoldDurationMs() < 2000) {
+    exitTennisApp(nowMs);
+    return;
+  }
+  // Long BOOT press = exit
+  if (button_.isHeld() && button_.heldDurationMs(nowMs) >= 2000) {
+    exitTennisApp(nowMs);
+    return;
+  }
+}
+
+void App::exitTennisApp(uint32_t nowMs) {
+  menuScreen_ = MenuScreen::Main;
+  setState(AppState::Menu, nowMs);
+}
+
+// ── End Tennis score app ──────────────────────────────────────────────────────
 
 void App::enterCompanionSync(uint32_t nowMs) {
   if (blockNetworkActionForOtaCheck("Sync", nowMs)) {
@@ -5782,6 +6022,7 @@ void App::renderMainMenu() {
   items.push_back("Bitcoin");
   items.push_back("Road Fighter");
   items.push_back("Music");
+  items.push_back("Tennis");
 #if RSVP_USB_TRANSFER_ENABLED
   items.push_back(uiText(UiText::UsbTransfer));
 #endif

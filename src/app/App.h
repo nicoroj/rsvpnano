@@ -159,6 +159,21 @@ class App {
     Cancel,
   };
 
+  struct TennisSet {
+    int p1 = 0;
+    int p2 = 0;
+  };
+
+  struct TennisGameState {
+    int p1Points = 0;
+    int p2Points = 0;
+    bool p1Serves = true;
+    bool p1ServedFirstInTiebreak = true;
+    bool inTiebreak = false;
+    TennisSet currentGames = {};
+    std::vector<TennisSet> completedSets;
+  };
+
   struct WifiNetworkInfo {
     String ssid;
     int32_t rssi = 0;
@@ -316,6 +331,12 @@ class App {
   void exitBluetoothPlayer(uint32_t nowMs);
   void renderMusicCanvas();
   void renderMusicTrackList();
+  void enterTennisApp(uint32_t nowMs);
+  void updateTennisApp(uint32_t nowMs);
+  void exitTennisApp(uint32_t nowMs);
+  void renderTennisCanvas();
+  void tennisScorePoint(int player);
+  void tennisUndo();
 
   void enterCompanionSync(uint32_t nowMs);
   void updateCompanionSync(uint32_t nowMs);
@@ -501,6 +522,9 @@ class App {
   bool btTrackListVisible_ = false;
   int btTrackListScroll_ = 0;
   bool btDisplayOff_ = false;
+  TennisGameState tennis_;
+  std::vector<TennisGameState> tennisHistory_;
+  bool tennisSetupDone_ = false;
   QueueHandle_t otaCheckQueue_ = nullptr;
   QueueHandle_t bitcoinQueue_ = nullptr;
   BitcoinResult bitcoinResult_;

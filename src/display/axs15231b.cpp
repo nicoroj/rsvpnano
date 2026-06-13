@@ -37,7 +37,7 @@ void writeBacklightPwm() {
   analogWriteFrequency(50000);
 
   if (!gBacklightOn) {
-    analogWrite(BoardConfig::PIN_LCD_BACKLIGHT, 255);
+    digitalWrite(BoardConfig::PIN_LCD_BACKLIGHT, HIGH);
     return;
   }
 

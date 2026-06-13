@@ -12,4 +12,5 @@ enum class AppState {
   BitcoinTicker,
   RoadFighterGame,
   BluetoothPlayer,
+  TennisApp,
 };
