@@ -467,6 +467,8 @@ class App {
   size_t currentBookIndex_ = 0;
   size_t pendingBootBookIndex_ = 0;
   size_t menuSelectedIndex_ = 0;
+  bool menuScrolling_ = false;
+  int menuScrollLastOffset_ = 0;
   size_t settingsSelectedIndex_ = 0;
   size_t wifiNetworkSelectedIndex_ = 0;
   size_t bookPickerSelectedIndex_ = 0;

@@ -37,6 +37,7 @@ constexpr uint32_t kScrollAnimationFrameMs = 16;
 constexpr uint16_t kSwipeThresholdPx = 40;
 constexpr uint16_t kAxisBiasPx = 12;
 constexpr uint16_t kTapSlopPx = 26;
+constexpr int kMenuScrollPixelsPerItem = 50;
 constexpr uint16_t kReaderDoubleTapSlopPx = 92;
 constexpr uint16_t kPreviousSentenceTapWidthPx = 96;
 constexpr uint16_t kPreviousSentenceTapHeightPx = 60;
@@ -2246,6 +2247,8 @@ void App::applyMenuTouchGesture(const TouchEvent &event, uint32_t nowMs) {
     pausedTouch_.lastY = event.y;
     pausedTouch_.startMs = nowMs;
     pausedTouch_.lastMs = nowMs;
+    menuScrolling_ = false;
+    menuScrollLastOffset_ = 0;
     return;
   }
 
@@ -2257,11 +2260,34 @@ void App::applyMenuTouchGesture(const TouchEvent &event, uint32_t nowMs) {
   pausedTouch_.lastY = event.y;
   pausedTouch_.lastMs = nowMs;
 
+  if (event.phase == TouchPhase::Move && menuScreen_ != MenuScreen::TextEntry) {
+    const int dX = static_cast<int>(event.x) - static_cast<int>(pausedTouch_.startX);
+    const int dY = static_cast<int>(event.y) - static_cast<int>(pausedTouch_.startY);
+    if (!menuScrolling_ && abs(dY) >= static_cast<int>(kSwipeThresholdPx) &&
+        abs(dY) > abs(dX) + static_cast<int>(kAxisBiasPx)) {
+      menuScrolling_ = true;
+    }
+    if (menuScrolling_) {
+      const int newOffset = dY / kMenuScrollPixelsPerItem;
+      const int steps = newOffset - menuScrollLastOffset_;
+      if (steps != 0) {
+        moveMenuSelection(steps);
+        menuScrollLastOffset_ = newOffset;
+      }
+    }
+    return;
+  }
+
   if (event.phase != TouchPhase::End) {
     return;
   }
 
   pausedTouch_.active = false;
+
+  if (menuScrolling_) {
+    menuScrolling_ = false;
+    return;
+  }
 
   const int deltaX = static_cast<int>(pausedTouch_.lastX) - static_cast<int>(pausedTouch_.startX);
   const int deltaY = static_cast<int>(pausedTouch_.lastY) - static_cast<int>(pausedTouch_.startY);
