@@ -175,6 +175,31 @@ class App {
     std::vector<TennisSet> completedSets;
   };
 
+  enum class SwingStroke : uint8_t { Forehand = 0, Backhand, Serve, Volley, Count };
+
+  struct SwingMetrics {
+    float peakG = 0.0f;
+    uint32_t durationMs = 0;
+    uint32_t followMs = 0;
+    float sharpness = 0.0f;
+    bool valid = false;
+  };
+
+  struct SwingTrainerState {
+    enum class Phase : uint8_t { StrokeSelect, Ready, Swinging, Cooldown };
+    Phase phase = Phase::StrokeSelect;
+    SwingStroke stroke = SwingStroke::Forehand;
+    uint32_t phaseStartMs = 0;
+    uint32_t swingStartMs = 0;
+    uint32_t lastSampleMs = 0;
+    float buf[150][3] = {};
+    uint8_t bufCount = 0;
+    uint32_t quietStartMs = 0;
+    SwingMetrics last;
+    SwingMetrics best[static_cast<size_t>(SwingStroke::Count)];
+    uint16_t totalSwings[static_cast<size_t>(SwingStroke::Count)] = {};
+  };
+
   struct WifiNetworkInfo {
     String ssid;
     int32_t rssi = 0;
@@ -339,6 +364,14 @@ class App {
   void tennisScorePoint(int player);
   void tennisUndo();
   void tennisRestartGame();
+  void enterSwingTrainer(uint32_t nowMs);
+  void updateSwingTrainer(uint32_t nowMs);
+  void exitSwingTrainer(uint32_t nowMs);
+  void renderSwingTrainer();
+  void renderSwingTrainerSelect();
+  void analyzeSwing(uint32_t nowMs);
+  void loadSwingTrainerBests();
+  void saveSwingTrainerBests(SwingStroke stroke);
   void openReaderMenu();
   void renderReaderMenu();
   void selectReaderMenuItem(uint32_t nowMs);
@@ -530,6 +563,7 @@ class App {
   TennisGameState tennis_;
   std::vector<TennisGameState> tennisHistory_;
   bool tennisSetupDone_ = false;
+  SwingTrainerState swingTrainer_;
   QueueHandle_t otaCheckQueue_ = nullptr;
   QueueHandle_t bitcoinQueue_ = nullptr;
   BitcoinResult bitcoinResult_;

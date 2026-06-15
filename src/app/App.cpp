@@ -109,6 +109,7 @@ enum MenuItem : size_t {
   MenuRoadFighter,
   MenuBluetoothPlayer,
   MenuTennisApp,
+  MenuSwingTrainer,
 #if RSVP_USB_TRANSFER_ENABLED
   MenuUsbTransfer,
 #endif
@@ -888,6 +889,8 @@ const char *App::stateName(AppState state) const {
       return "BluetoothPlayer";
     case AppState::TennisApp:
       return "TennisApp";
+    case AppState::SwingTrainer:
+      return "SwingTrainer";
     case AppState::UsbTransfer:
       return "UsbTransfer";
     case AppState::Standby:
@@ -962,6 +965,8 @@ void App::setState(AppState nextState, uint32_t nowMs) {
       break;
     case AppState::TennisApp:
       break;
+    case AppState::SwingTrainer:
+      break;
     case AppState::UsbTransfer:
       display_.renderStatus("USB", "Preparing SD", "Eject when done");
       break;
@@ -1025,6 +1030,11 @@ void App::updateState(uint32_t nowMs) {
 
   if (state_ == AppState::TennisApp) {
     updateTennisApp(nowMs);
+    return;
+  }
+
+  if (state_ == AppState::SwingTrainer) {
+    updateSwingTrainer(nowMs);
     return;
   }
 
@@ -1097,7 +1107,7 @@ bool App::handleStandbyCombo(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
       state_ == AppState::RoadFighterGame || state_ == AppState::BluetoothPlayer ||
-      state_ == AppState::TennisApp ||
+      state_ == AppState::TennisApp || state_ == AppState::SwingTrainer ||
       state_ == AppState::Sleeping || powerOffStarted_ || !bootButtonReleasedSinceBoot_ ||
       !powerButtonReleasedSinceBoot_) {
     return false;
@@ -1169,7 +1179,7 @@ void App::handleBootButton(uint32_t nowMs) {
   if (state_ == AppState::Booting || state_ == AppState::UsbTransfer ||
       state_ == AppState::CompanionSync || state_ == AppState::BitcoinTicker ||
       state_ == AppState::RoadFighterGame || state_ == AppState::BluetoothPlayer ||
-      state_ == AppState::TennisApp ||
+      state_ == AppState::TennisApp || state_ == AppState::SwingTrainer ||
       state_ == AppState::Sleeping || powerOffStarted_) {
     return;
   }
@@ -2145,6 +2155,24 @@ void App::handleTouch(uint32_t nowMs) {
         }
       }
     }
+  } else if (state_ == AppState::SwingTrainer) {
+    if (swingTrainer_.phase == SwingTrainerState::Phase::StrokeSelect &&
+        ev.phase == TouchPhase::End) {
+      const int x = static_cast<int>(ev.x);
+      if (x < 160) {
+        swingTrainer_.stroke = SwingStroke::Forehand;
+      } else if (x < 320) {
+        swingTrainer_.stroke = SwingStroke::Backhand;
+      } else if (x < 480) {
+        swingTrainer_.stroke = SwingStroke::Serve;
+      } else {
+        swingTrainer_.stroke = SwingStroke::Volley;
+      }
+      swingTrainer_.phase = SwingTrainerState::Phase::Ready;
+      swingTrainer_.phaseStartMs = nowMs;
+      swingTrainer_.last = SwingMetrics{};
+      renderSwingTrainer();
+    }
   } else {
     applyPausedTouchGesture(ev, nowMs);
   }
@@ -2812,6 +2840,9 @@ void App::selectMenuItem(uint32_t nowMs) {
       return;
     case MenuTennisApp:
       enterTennisApp(nowMs);
+      return;
+    case MenuSwingTrainer:
+      enterSwingTrainer(nowMs);
       return;
     case MenuSdCardCheck:
       runSdCardCheck(nowMs);
@@ -4962,6 +4993,329 @@ void App::exitTennisApp(uint32_t nowMs) {
 
 // ── End Tennis score app ──────────────────────────────────────────────────────
 
+// ── Swing Trainer ─────────────────────────────────────────────────────────────
+
+namespace {
+
+constexpr int kSTLW = 640;
+constexpr int kSTLH = 172;
+constexpr int kSTDivY1 = 34;
+constexpr int kSTDivY2 = 120;
+constexpr int kSTColW = 160;
+
+constexpr uint16_t kSTBg     = 0x0000;
+constexpr uint16_t kSTLine   = 0x18E3;
+constexpr uint16_t kSTWhite  = 0xFFFF;
+constexpr uint16_t kSTDim    = 0x4A69;
+constexpr uint16_t kSTGreen  = 0x07E0;
+
+constexpr float    kSTTargetPeakG      = 8.0f;
+constexpr uint32_t kSTTargetFollowMs   = 180;
+constexpr float    kSTTargetSharpness  = 1.8f;
+constexpr uint32_t kSTTargetDurMinMs   = 350;
+constexpr uint32_t kSTTargetDurMaxMs   = 650;
+
+constexpr float    kSTSwingStartG  = 2.2f;
+constexpr float    kSTSwingEndG    = 1.3f;
+constexpr float    kSTFollowEndG   = 1.5f;
+constexpr uint32_t kSTQuietMs      = 400;
+constexpr uint32_t kSTCooldownMs   = 1000;
+constexpr uint8_t  kSTBufMax       = 150;
+constexpr uint32_t kSTSampleMs     = 20;
+constexpr int      kSTSharpLookback = 5;
+
+const char* kSTStrokeNames[] = { "FOREHAND", "BACKHAND", "SERVE", "VOLLEY" };
+const int   kSTStrokeNameLen[] = { 8, 8, 5, 6 };
+
+}  // namespace
+
+void App::enterSwingTrainer(uint32_t nowMs) {
+  saveReadingPosition(true);
+  touch_.cancel();
+  pausedTouch_.active = false;
+  pausedTouchIntent_ = TouchIntent::None;
+  wpmFeedbackVisible_ = false;
+  loadSwingTrainerBests();
+  swingTrainer_.phase = SwingTrainerState::Phase::StrokeSelect;
+  swingTrainer_.phaseStartMs = nowMs;
+  setState(AppState::SwingTrainer, nowMs);
+  renderSwingTrainer();
+}
+
+void App::updateSwingTrainer(uint32_t nowMs) {
+  const SwingTrainerState::Phase phase = swingTrainer_.phase;
+
+  if (button_.wasReleasedEvent()) {
+    if (phase == SwingTrainerState::Phase::StrokeSelect) {
+      exitSwingTrainer(nowMs);
+    } else {
+      swingTrainer_.phase = SwingTrainerState::Phase::StrokeSelect;
+      swingTrainer_.phaseStartMs = nowMs;
+      renderSwingTrainer();
+    }
+    return;
+  }
+
+  if (phase == SwingTrainerState::Phase::StrokeSelect) {
+    return;
+  }
+
+  if (nowMs - swingTrainer_.lastSampleMs < kSTSampleMs) {
+    return;
+  }
+  swingTrainer_.lastSampleMs = nowMs;
+
+  float ax = 0.0f, ay = 0.0f, az = 0.0f;
+  if (!focusTimer_.readAccel(ax, ay, az)) {
+    return;
+  }
+  const float mag = sqrtf(ax * ax + ay * ay + az * az);
+
+  if (phase == SwingTrainerState::Phase::Ready) {
+    if (mag >= kSTSwingStartG) {
+      swingTrainer_.phase = SwingTrainerState::Phase::Swinging;
+      swingTrainer_.phaseStartMs = nowMs;
+      swingTrainer_.swingStartMs = nowMs;
+      swingTrainer_.bufCount = 0;
+      swingTrainer_.quietStartMs = 0;
+      renderSwingTrainer();
+    }
+  } else if (phase == SwingTrainerState::Phase::Swinging) {
+    if (swingTrainer_.bufCount < kSTBufMax) {
+      swingTrainer_.buf[swingTrainer_.bufCount][0] = ax;
+      swingTrainer_.buf[swingTrainer_.bufCount][1] = ay;
+      swingTrainer_.buf[swingTrainer_.bufCount][2] = az;
+      swingTrainer_.bufCount++;
+    }
+
+    if (mag < kSTSwingEndG) {
+      if (swingTrainer_.quietStartMs == 0) {
+        swingTrainer_.quietStartMs = nowMs;
+      } else if (nowMs - swingTrainer_.quietStartMs >= kSTQuietMs) {
+        analyzeSwing(nowMs);
+        swingTrainer_.phase = SwingTrainerState::Phase::Cooldown;
+        swingTrainer_.phaseStartMs = nowMs;
+        renderSwingTrainer();
+      }
+    } else {
+      swingTrainer_.quietStartMs = 0;
+    }
+
+    if (swingTrainer_.bufCount >= kSTBufMax) {
+      analyzeSwing(nowMs);
+      swingTrainer_.phase = SwingTrainerState::Phase::Cooldown;
+      swingTrainer_.phaseStartMs = nowMs;
+      renderSwingTrainer();
+    }
+  } else if (phase == SwingTrainerState::Phase::Cooldown) {
+    if (nowMs - swingTrainer_.phaseStartMs >= kSTCooldownMs) {
+      swingTrainer_.phase = SwingTrainerState::Phase::Ready;
+      swingTrainer_.phaseStartMs = nowMs;
+    }
+  }
+}
+
+void App::exitSwingTrainer(uint32_t nowMs) {
+  menuScreen_ = MenuScreen::Main;
+  setState(AppState::Menu, nowMs);
+}
+
+void App::analyzeSwing(uint32_t nowMs) {
+  (void)nowMs;
+  const uint8_t count = swingTrainer_.bufCount;
+  if (count == 0) return;
+
+  float peakG = 0.0f;
+  uint8_t peakIdx = 0;
+  for (uint8_t i = 0; i < count; i++) {
+    const float x = swingTrainer_.buf[i][0];
+    const float y = swingTrainer_.buf[i][1];
+    const float z = swingTrainer_.buf[i][2];
+    const float m = sqrtf(x * x + y * y + z * z);
+    if (m > peakG) { peakG = m; peakIdx = i; }
+  }
+
+  const uint32_t durationMs = static_cast<uint32_t>(peakIdx) * kSTSampleMs;
+
+  const int lbIdx = (static_cast<int>(peakIdx) - kSTSharpLookback < 0)
+                        ? 0
+                        : static_cast<int>(peakIdx) - kSTSharpLookback;
+  const float lx = swingTrainer_.buf[lbIdx][0];
+  const float ly = swingTrainer_.buf[lbIdx][1];
+  const float lz = swingTrainer_.buf[lbIdx][2];
+  const float preMag = sqrtf(lx * lx + ly * ly + lz * lz);
+  const float sharpness = (preMag > 0.1f) ? (peakG / preMag) : peakG;
+
+  uint32_t followMs = 0;
+  for (uint8_t i = peakIdx + 1; i < count; i++) {
+    const float x = swingTrainer_.buf[i][0];
+    const float y = swingTrainer_.buf[i][1];
+    const float z = swingTrainer_.buf[i][2];
+    if (sqrtf(x * x + y * y + z * z) >= kSTFollowEndG) {
+      followMs += kSTSampleMs;
+    } else {
+      break;
+    }
+  }
+
+  swingTrainer_.last.peakG      = peakG;
+  swingTrainer_.last.durationMs = durationMs;
+  swingTrainer_.last.followMs   = followMs;
+  swingTrainer_.last.sharpness  = sharpness;
+  swingTrainer_.last.valid      = true;
+
+  const size_t si = static_cast<size_t>(swingTrainer_.stroke);
+  SwingMetrics& best = swingTrainer_.best[si];
+  if (!best.valid || peakG > best.peakG) {
+    best = swingTrainer_.last;
+  }
+  swingTrainer_.totalSwings[si]++;
+  saveSwingTrainerBests(swingTrainer_.stroke);
+}
+
+void App::loadSwingTrainerBests() {
+  for (size_t i = 0; i < static_cast<size_t>(SwingStroke::Count); i++) {
+    const String si = String(static_cast<int>(i));
+    swingTrainer_.best[i].peakG      = preferences_.getFloat(("stp" + si).c_str(), 0.0f);
+    swingTrainer_.best[i].durationMs = preferences_.getUInt(("std" + si).c_str(), 0);
+    swingTrainer_.best[i].followMs   = preferences_.getUInt(("stf" + si).c_str(), 0);
+    swingTrainer_.best[i].sharpness  = preferences_.getFloat(("sts" + si).c_str(), 0.0f);
+    swingTrainer_.totalSwings[i]     = preferences_.getUShort(("stn" + si).c_str(), 0);
+    swingTrainer_.best[i].valid      = (swingTrainer_.best[i].peakG > 0.0f);
+  }
+  swingTrainer_.last = SwingMetrics{};
+}
+
+void App::saveSwingTrainerBests(SwingStroke stroke) {
+  const size_t i = static_cast<size_t>(stroke);
+  const String si = String(static_cast<int>(i));
+  preferences_.putFloat(("stp" + si).c_str(), swingTrainer_.best[i].peakG);
+  preferences_.putUInt(("std" + si).c_str(), swingTrainer_.best[i].durationMs);
+  preferences_.putUInt(("stf" + si).c_str(), swingTrainer_.best[i].followMs);
+  preferences_.putFloat(("sts" + si).c_str(), swingTrainer_.best[i].sharpness);
+  preferences_.putUShort(("stn" + si).c_str(), swingTrainer_.totalSwings[i]);
+}
+
+void App::renderSwingTrainerSelect() {
+  display_.musicBegin();
+  display_.musicFillRect(0, 0, kSTLW, kSTLH, kSTBg);
+
+  display_.musicDrawText("SWING TRAINER", 242, 8, kSTWhite, 2);
+  display_.musicFillRect(0, kSTDivY1, kSTLW, 1, kSTLine);
+
+  for (int c = 1; c < 4; c++) {
+    display_.musicFillRect(c * kSTColW, kSTDivY1, 1, kSTLH - kSTDivY1, kSTLine);
+  }
+
+  for (int c = 0; c < 4; c++) {
+    const int w = kSTStrokeNameLen[c] * 6 * 2;
+    const int x = c * kSTColW + (kSTColW - w) / 2;
+    display_.musicDrawText(kSTStrokeNames[c], x, 86, kSTWhite, 2);
+  }
+
+  display_.musicDrawText("TAP TO SELECT STROKE", 260, 148, kSTDim, 1);
+  display_.musicCommit();
+}
+
+void App::renderSwingTrainer() {
+  if (swingTrainer_.phase == SwingTrainerState::Phase::StrokeSelect) {
+    renderSwingTrainerSelect();
+    return;
+  }
+
+  display_.musicBegin();
+  display_.musicFillRect(0, 0, kSTLW, kSTLH, kSTBg);
+
+  if (swingTrainer_.phase == SwingTrainerState::Phase::Swinging) {
+    display_.musicDrawText("SWINGING...", 254, 76, kSTGreen, 2);
+    display_.musicCommit();
+    return;
+  }
+
+  const size_t si = static_cast<size_t>(swingTrainer_.stroke);
+  const SwingMetrics& last = swingTrainer_.last;
+  const SwingMetrics& best = swingTrainer_.best[si];
+
+  // Title bar
+  display_.musicDrawText(kSTStrokeNames[si], 6, 10, kSTWhite, 2);
+  char countBuf[20];
+  snprintf(countBuf, sizeof(countBuf), "%u swings", swingTrainer_.totalSwings[si]);
+  display_.musicDrawText(countBuf, 450, 10, kSTDim, 1);
+  display_.musicFillRect(0, kSTDivY1, kSTLW, 1, kSTLine);
+
+  // Column dividers
+  for (int c = 1; c < 4; c++) {
+    display_.musicFillRect(c * kSTColW, kSTDivY1, 1, kSTDivY2 - kSTDivY1, kSTLine);
+  }
+  display_.musicFillRect(0, kSTDivY2, kSTLW, 1, kSTLine);
+
+  // Column headers
+  display_.musicDrawText("PEAK",      4,               kSTDivY1 + 4, kSTDim, 1);
+  display_.musicDrawText("DURATION",  kSTColW + 4,     kSTDivY1 + 4, kSTDim, 1);
+  display_.musicDrawText("FOLLOW",    2 * kSTColW + 4, kSTDivY1 + 4, kSTDim, 1);
+  display_.musicDrawText("SHARPNESS", 3 * kSTColW + 4, kSTDivY1 + 4, kSTDim, 1);
+
+  char buf[24];
+
+  // Last swing values
+  const int kValY  = 54;
+  const int kBestY = 82;
+
+  if (last.valid) {
+    snprintf(buf, sizeof(buf), "%.1fg", last.peakG);
+    display_.musicDrawText(buf, 4, kValY,
+                           last.peakG >= kSTTargetPeakG ? kSTGreen : kSTWhite, 2);
+
+    snprintf(buf, sizeof(buf), "%ums", static_cast<unsigned>(last.durationMs));
+    const bool durOk = last.durationMs >= kSTTargetDurMinMs &&
+                       last.durationMs <= kSTTargetDurMaxMs;
+    display_.musicDrawText(buf, kSTColW + 4, kValY, durOk ? kSTGreen : kSTWhite, 2);
+
+    snprintf(buf, sizeof(buf), "%ums", static_cast<unsigned>(last.followMs));
+    display_.musicDrawText(buf, 2 * kSTColW + 4, kValY,
+                           last.followMs >= kSTTargetFollowMs ? kSTGreen : kSTWhite, 2);
+
+    snprintf(buf, sizeof(buf), "%.1f", last.sharpness);
+    display_.musicDrawText(buf, 3 * kSTColW + 4, kValY,
+                           last.sharpness >= kSTTargetSharpness ? kSTGreen : kSTWhite, 2);
+  } else {
+    display_.musicDrawText("--", 4,               kValY, kSTDim, 2);
+    display_.musicDrawText("--", kSTColW + 4,     kValY, kSTDim, 2);
+    display_.musicDrawText("--", 2 * kSTColW + 4, kValY, kSTDim, 2);
+    display_.musicDrawText("--", 3 * kSTColW + 4, kValY, kSTDim, 2);
+  }
+
+  // Personal best values
+  if (best.valid) {
+    snprintf(buf, sizeof(buf), "b:%.1fg", best.peakG);
+    display_.musicDrawText(buf, 4, kBestY, kSTDim, 1);
+    snprintf(buf, sizeof(buf), "b:%ums", static_cast<unsigned>(best.durationMs));
+    display_.musicDrawText(buf, kSTColW + 4, kBestY, kSTDim, 1);
+    snprintf(buf, sizeof(buf), "b:%ums", static_cast<unsigned>(best.followMs));
+    display_.musicDrawText(buf, 2 * kSTColW + 4, kBestY, kSTDim, 1);
+    snprintf(buf, sizeof(buf), "b:%.1f", best.sharpness);
+    display_.musicDrawText(buf, 3 * kSTColW + 4, kBestY, kSTDim, 1);
+  }
+
+  // Footer: targets
+  display_.musicDrawText("peak>=8g",      4,               kSTDivY2 + 4, kSTDim, 1);
+  display_.musicDrawText("350-650ms",     kSTColW + 4,     kSTDivY2 + 4, kSTDim, 1);
+  display_.musicDrawText("follow>=180ms", 2 * kSTColW + 4, kSTDivY2 + 4, kSTDim, 1);
+  display_.musicDrawText("sharp>=1.8",    3 * kSTColW + 4, kSTDivY2 + 4, kSTDim, 1);
+
+  // Footer: status / hint
+  if (swingTrainer_.phase == SwingTrainerState::Phase::Ready) {
+    display_.musicDrawText("READY - swing now", 4, kSTDivY2 + 18, kSTDim, 1);
+  } else {
+    display_.musicDrawText("NICE SWING!", 4, kSTDivY2 + 18, kSTGreen, 1);
+  }
+  display_.musicDrawText("[press=change stroke]", 380, kSTDivY2 + 18, kSTDim, 1);
+
+  display_.musicCommit();
+}
+
+// ── End Swing Trainer ─────────────────────────────────────────────────────────
+
 void App::enterCompanionSync(uint32_t nowMs) {
   if (blockNetworkActionForOtaCheck("Sync", nowMs)) {
     return;
@@ -6034,6 +6388,7 @@ void App::renderMainMenu() {
   items.push_back("Road Fighter");
   items.push_back("Music");
   items.push_back("Tennis");
+  items.push_back("Swing Trainer");
 #if RSVP_USB_TRANSFER_ENABLED
   items.push_back(uiText(UiText::UsbTransfer));
 #endif

@@ -13,4 +13,5 @@ enum class AppState {
   RoadFighterGame,
   BluetoothPlayer,
   TennisApp,
+  SwingTrainer,
 };
