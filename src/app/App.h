@@ -177,12 +177,12 @@ class App {
 
   enum class SwingStroke : uint8_t { Forehand = 0, Backhand, Serve, Volley, Count };
 
-  struct SwingMetrics {
-    float peakG = 0.0f;
-    uint32_t durationMs = 0;
-    uint32_t followMs = 0;
-    float sharpness = 0.0f;
-    bool valid = false;
+  struct SwingFormMetrics {
+    float planScore = 0.0f;  // dominant-axis fraction of total rotation (0-1)
+    float snapDps   = 0.0f;  // peak angular velocity in deg/s
+    float arcDeg    = 0.0f;  // total rotation arc in degrees
+    float peakG     = 0.0f;  // peak linear acceleration in g
+    bool  valid     = false;
   };
 
   struct SwingTrainerState {
@@ -192,11 +192,12 @@ class App {
     uint32_t phaseStartMs = 0;
     uint32_t swingStartMs = 0;
     uint32_t lastSampleMs = 0;
-    float buf[150][3] = {};
+    float accelBuf[100][3] = {};
+    float gyroBuf[100][3]  = {};
     uint8_t bufCount = 0;
     uint32_t quietStartMs = 0;
-    SwingMetrics last;
-    SwingMetrics best[static_cast<size_t>(SwingStroke::Count)];
+    SwingFormMetrics last;
+    SwingFormMetrics best[static_cast<size_t>(SwingStroke::Count)];
     uint16_t totalSwings[static_cast<size_t>(SwingStroke::Count)] = {};
   };
 

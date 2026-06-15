@@ -2170,7 +2170,7 @@ void App::handleTouch(uint32_t nowMs) {
       }
       swingTrainer_.phase = SwingTrainerState::Phase::Ready;
       swingTrainer_.phaseStartMs = nowMs;
-      swingTrainer_.last = SwingMetrics{};
+      swingTrainer_.last = SwingFormMetrics{};
       renderSwingTrainer();
     }
   } else {
@@ -4997,34 +4997,31 @@ void App::exitTennisApp(uint32_t nowMs) {
 
 namespace {
 
-constexpr int kSTLW = 640;
-constexpr int kSTLH = 172;
-constexpr int kSTDivY1 = 34;
-constexpr int kSTDivY2 = 120;
+constexpr int kSTLW   = 640;
+constexpr int kSTLH   = 172;
+constexpr int kSTDiv1 = 34;
+constexpr int kSTDiv2 = 120;
 constexpr int kSTColW = 160;
 
-constexpr uint16_t kSTBg     = 0x0000;
-constexpr uint16_t kSTLine   = 0x18E3;
-constexpr uint16_t kSTWhite  = 0xFFFF;
-constexpr uint16_t kSTDim    = 0x4A69;
-constexpr uint16_t kSTGreen  = 0x07E0;
+constexpr uint16_t kSTBg    = 0x0000;
+constexpr uint16_t kSTLine  = 0x18E3;
+constexpr uint16_t kSTWhite = 0xFFFF;
+constexpr uint16_t kSTDim   = 0x4A69;
+constexpr uint16_t kSTGreen = 0x07E0;
 
-constexpr float    kSTTargetPeakG      = 8.0f;
-constexpr uint32_t kSTTargetFollowMs   = 180;
-constexpr float    kSTTargetSharpness  = 1.8f;
-constexpr uint32_t kSTTargetDurMinMs   = 350;
-constexpr uint32_t kSTTargetDurMaxMs   = 650;
+constexpr float kSTTargetPlanScore = 0.70f;
+constexpr float kSTTargetSnapDps   = 150.0f;
+constexpr float kSTTargetArcDeg    = 60.0f;
+constexpr float kSTTargetPeakG     = 4.0f;
 
-constexpr float    kSTSwingStartG  = 2.2f;
-constexpr float    kSTSwingEndG    = 1.3f;
-constexpr float    kSTFollowEndG   = 1.5f;
-constexpr uint32_t kSTQuietMs      = 400;
-constexpr uint32_t kSTCooldownMs   = 1000;
-constexpr uint8_t  kSTBufMax       = 150;
-constexpr uint32_t kSTSampleMs     = 20;
-constexpr int      kSTSharpLookback = 5;
+constexpr float    kSTSwingStartG = 2.2f;
+constexpr float    kSTSwingEndG   = 1.3f;
+constexpr uint32_t kSTQuietMs     = 400;
+constexpr uint32_t kSTCooldownMs  = 1000;
+constexpr uint8_t  kSTBufMax      = 100;
+constexpr uint32_t kSTSampleMs    = 20;
 
-const char* kSTStrokeNames[] = { "FOREHAND", "BACKHAND", "SERVE", "VOLLEY" };
+const char* kSTStrokeNames[]   = { "FOREHAND", "BACKHAND", "SERVE", "VOLLEY" };
 const int   kSTStrokeNameLen[] = { 8, 8, 5, 6 };
 
 }  // namespace
@@ -5035,6 +5032,7 @@ void App::enterSwingTrainer(uint32_t nowMs) {
   pausedTouch_.active = false;
   pausedTouchIntent_ = TouchIntent::None;
   wpmFeedbackVisible_ = false;
+  focusTimer_.setHighRangeGyro(true);
   loadSwingTrainerBests();
   swingTrainer_.phase = SwingTrainerState::Phase::StrokeSelect;
   swingTrainer_.phaseStartMs = nowMs;
@@ -5056,19 +5054,13 @@ void App::updateSwingTrainer(uint32_t nowMs) {
     return;
   }
 
-  if (phase == SwingTrainerState::Phase::StrokeSelect) {
-    return;
-  }
+  if (phase == SwingTrainerState::Phase::StrokeSelect) return;
 
-  if (nowMs - swingTrainer_.lastSampleMs < kSTSampleMs) {
-    return;
-  }
+  if (nowMs - swingTrainer_.lastSampleMs < kSTSampleMs) return;
   swingTrainer_.lastSampleMs = nowMs;
 
   float ax = 0.0f, ay = 0.0f, az = 0.0f;
-  if (!focusTimer_.readAccel(ax, ay, az)) {
-    return;
-  }
+  if (!focusTimer_.readAccel(ax, ay, az)) return;
   const float mag = sqrtf(ax * ax + ay * ay + az * az);
 
   if (phase == SwingTrainerState::Phase::Ready) {
@@ -5082,9 +5074,15 @@ void App::updateSwingTrainer(uint32_t nowMs) {
     }
   } else if (phase == SwingTrainerState::Phase::Swinging) {
     if (swingTrainer_.bufCount < kSTBufMax) {
-      swingTrainer_.buf[swingTrainer_.bufCount][0] = ax;
-      swingTrainer_.buf[swingTrainer_.bufCount][1] = ay;
-      swingTrainer_.buf[swingTrainer_.bufCount][2] = az;
+      const uint8_t n = swingTrainer_.bufCount;
+      swingTrainer_.accelBuf[n][0] = ax;
+      swingTrainer_.accelBuf[n][1] = ay;
+      swingTrainer_.accelBuf[n][2] = az;
+      float gx = 0.0f, gy = 0.0f, gz = 0.0f;
+      focusTimer_.readGyro(gx, gy, gz);
+      swingTrainer_.gyroBuf[n][0] = gx;
+      swingTrainer_.gyroBuf[n][1] = gy;
+      swingTrainer_.gyroBuf[n][2] = gz;
       swingTrainer_.bufCount++;
     }
 
@@ -5116,6 +5114,7 @@ void App::updateSwingTrainer(uint32_t nowMs) {
 }
 
 void App::exitSwingTrainer(uint32_t nowMs) {
+  focusTimer_.setHighRangeGyro(false);
   menuScreen_ = MenuScreen::Main;
   setState(AppState::Menu, nowMs);
 }
@@ -5123,50 +5122,46 @@ void App::exitSwingTrainer(uint32_t nowMs) {
 void App::analyzeSwing(uint32_t nowMs) {
   (void)nowMs;
   const uint8_t count = swingTrainer_.bufCount;
-  if (count == 0) return;
+  if (count < 3) return;
 
   float peakG = 0.0f;
-  uint8_t peakIdx = 0;
   for (uint8_t i = 0; i < count; i++) {
-    const float x = swingTrainer_.buf[i][0];
-    const float y = swingTrainer_.buf[i][1];
-    const float z = swingTrainer_.buf[i][2];
+    const float x = swingTrainer_.accelBuf[i][0];
+    const float y = swingTrainer_.accelBuf[i][1];
+    const float z = swingTrainer_.accelBuf[i][2];
     const float m = sqrtf(x * x + y * y + z * z);
-    if (m > peakG) { peakG = m; peakIdx = i; }
+    if (m > peakG) peakG = m;
   }
 
-  const uint32_t durationMs = static_cast<uint32_t>(peakIdx) * kSTSampleMs;
-
-  const int lbIdx = (static_cast<int>(peakIdx) - kSTSharpLookback < 0)
-                        ? 0
-                        : static_cast<int>(peakIdx) - kSTSharpLookback;
-  const float lx = swingTrainer_.buf[lbIdx][0];
-  const float ly = swingTrainer_.buf[lbIdx][1];
-  const float lz = swingTrainer_.buf[lbIdx][2];
-  const float preMag = sqrtf(lx * lx + ly * ly + lz * lz);
-  const float sharpness = (preMag > 0.1f) ? (peakG / preMag) : peakG;
-
-  uint32_t followMs = 0;
-  for (uint8_t i = peakIdx + 1; i < count; i++) {
-    const float x = swingTrainer_.buf[i][0];
-    const float y = swingTrainer_.buf[i][1];
-    const float z = swingTrainer_.buf[i][2];
-    if (sqrtf(x * x + y * y + z * z) >= kSTFollowEndG) {
-      followMs += kSTSampleMs;
-    } else {
-      break;
-    }
+  float ssX = 0.0f, ssY = 0.0f, ssZ = 0.0f;
+  float peakSnapDps = 0.0f;
+  float totalArcDeg = 0.0f;
+  for (uint8_t i = 0; i < count; i++) {
+    const float gx = swingTrainer_.gyroBuf[i][0];
+    const float gy = swingTrainer_.gyroBuf[i][1];
+    const float gz = swingTrainer_.gyroBuf[i][2];
+    ssX += gx * gx;
+    ssY += gy * gy;
+    ssZ += gz * gz;
+    const float gm = sqrtf(gx * gx + gy * gy + gz * gz);
+    if (gm > peakSnapDps) peakSnapDps = gm;
+    totalArcDeg += gm * (kSTSampleMs / 1000.0f);
   }
 
-  swingTrainer_.last.peakG      = peakG;
-  swingTrainer_.last.durationMs = durationMs;
-  swingTrainer_.last.followMs   = followMs;
-  swingTrainer_.last.sharpness  = sharpness;
-  swingTrainer_.last.valid      = true;
+  const float domSS = (ssX >= ssY && ssX >= ssZ) ? ssX :
+                      (ssY >= ssZ)               ? ssY : ssZ;
+  const float totSS = ssX + ssY + ssZ;
+  const float planScore = (totSS > 1.0f) ? sqrtf(domSS / totSS) : 0.0f;
+
+  swingTrainer_.last.planScore = planScore;
+  swingTrainer_.last.snapDps   = peakSnapDps;
+  swingTrainer_.last.arcDeg    = totalArcDeg;
+  swingTrainer_.last.peakG     = peakG;
+  swingTrainer_.last.valid     = true;
 
   const size_t si = static_cast<size_t>(swingTrainer_.stroke);
-  SwingMetrics& best = swingTrainer_.best[si];
-  if (!best.valid || peakG > best.peakG) {
+  SwingFormMetrics& best = swingTrainer_.best[si];
+  if (!best.valid || peakSnapDps > best.snapDps) {
     best = swingTrainer_.last;
   }
   swingTrainer_.totalSwings[si]++;
@@ -5176,43 +5171,39 @@ void App::analyzeSwing(uint32_t nowMs) {
 void App::loadSwingTrainerBests() {
   for (size_t i = 0; i < static_cast<size_t>(SwingStroke::Count); i++) {
     const String si = String(static_cast<int>(i));
-    swingTrainer_.best[i].peakG      = preferences_.getFloat(("stp" + si).c_str(), 0.0f);
-    swingTrainer_.best[i].durationMs = preferences_.getUInt(("std" + si).c_str(), 0);
-    swingTrainer_.best[i].followMs   = preferences_.getUInt(("stf" + si).c_str(), 0);
-    swingTrainer_.best[i].sharpness  = preferences_.getFloat(("sts" + si).c_str(), 0.0f);
-    swingTrainer_.totalSwings[i]     = preferences_.getUShort(("stn" + si).c_str(), 0);
-    swingTrainer_.best[i].valid      = (swingTrainer_.best[i].peakG > 0.0f);
+    swingTrainer_.best[i].planScore = preferences_.getFloat(("stpl" + si).c_str(), 0.0f);
+    swingTrainer_.best[i].snapDps   = preferences_.getFloat(("stsn" + si).c_str(), 0.0f);
+    swingTrainer_.best[i].arcDeg    = preferences_.getFloat(("star" + si).c_str(), 0.0f);
+    swingTrainer_.best[i].peakG     = preferences_.getFloat(("stpw" + si).c_str(), 0.0f);
+    swingTrainer_.totalSwings[i]    = preferences_.getUShort(("stn" + si).c_str(), 0);
+    swingTrainer_.best[i].valid     = (swingTrainer_.best[i].snapDps > 0.0f);
   }
-  swingTrainer_.last = SwingMetrics{};
+  swingTrainer_.last = SwingFormMetrics{};
 }
 
 void App::saveSwingTrainerBests(SwingStroke stroke) {
   const size_t i = static_cast<size_t>(stroke);
   const String si = String(static_cast<int>(i));
-  preferences_.putFloat(("stp" + si).c_str(), swingTrainer_.best[i].peakG);
-  preferences_.putUInt(("std" + si).c_str(), swingTrainer_.best[i].durationMs);
-  preferences_.putUInt(("stf" + si).c_str(), swingTrainer_.best[i].followMs);
-  preferences_.putFloat(("sts" + si).c_str(), swingTrainer_.best[i].sharpness);
+  preferences_.putFloat(("stpl" + si).c_str(), swingTrainer_.best[i].planScore);
+  preferences_.putFloat(("stsn" + si).c_str(), swingTrainer_.best[i].snapDps);
+  preferences_.putFloat(("star" + si).c_str(), swingTrainer_.best[i].arcDeg);
+  preferences_.putFloat(("stpw" + si).c_str(), swingTrainer_.best[i].peakG);
   preferences_.putUShort(("stn" + si).c_str(), swingTrainer_.totalSwings[i]);
 }
 
 void App::renderSwingTrainerSelect() {
   display_.musicBegin();
   display_.musicFillRect(0, 0, kSTLW, kSTLH, kSTBg);
-
   display_.musicDrawText("SWING TRAINER", 242, 8, kSTWhite, 2);
-  display_.musicFillRect(0, kSTDivY1, kSTLW, 1, kSTLine);
-
+  display_.musicFillRect(0, kSTDiv1, kSTLW, 1, kSTLine);
   for (int c = 1; c < 4; c++) {
-    display_.musicFillRect(c * kSTColW, kSTDivY1, 1, kSTLH - kSTDivY1, kSTLine);
+    display_.musicFillRect(c * kSTColW, kSTDiv1, 1, kSTLH - kSTDiv1, kSTLine);
   }
-
   for (int c = 0; c < 4; c++) {
     const int w = kSTStrokeNameLen[c] * 6 * 2;
     const int x = c * kSTColW + (kSTColW - w) / 2;
     display_.musicDrawText(kSTStrokeNames[c], x, 86, kSTWhite, 2);
   }
-
   display_.musicDrawText("TAP TO SELECT STROKE", 260, 148, kSTDim, 1);
   display_.musicCommit();
 }
@@ -5233,51 +5224,42 @@ void App::renderSwingTrainer() {
   }
 
   const size_t si = static_cast<size_t>(swingTrainer_.stroke);
-  const SwingMetrics& last = swingTrainer_.last;
-  const SwingMetrics& best = swingTrainer_.best[si];
+  const SwingFormMetrics& last = swingTrainer_.last;
+  const SwingFormMetrics& best = swingTrainer_.best[si];
 
-  // Title bar
   display_.musicDrawText(kSTStrokeNames[si], 6, 10, kSTWhite, 2);
   char countBuf[20];
   snprintf(countBuf, sizeof(countBuf), "%u swings", swingTrainer_.totalSwings[si]);
   display_.musicDrawText(countBuf, 450, 10, kSTDim, 1);
-  display_.musicFillRect(0, kSTDivY1, kSTLW, 1, kSTLine);
+  display_.musicFillRect(0, kSTDiv1, kSTLW, 1, kSTLine);
 
-  // Column dividers
   for (int c = 1; c < 4; c++) {
-    display_.musicFillRect(c * kSTColW, kSTDivY1, 1, kSTDivY2 - kSTDivY1, kSTLine);
+    display_.musicFillRect(c * kSTColW, kSTDiv1, 1, kSTDiv2 - kSTDiv1, kSTLine);
   }
-  display_.musicFillRect(0, kSTDivY2, kSTLW, 1, kSTLine);
+  display_.musicFillRect(0, kSTDiv2, kSTLW, 1, kSTLine);
 
-  // Column headers
-  display_.musicDrawText("PEAK",      4,               kSTDivY1 + 4, kSTDim, 1);
-  display_.musicDrawText("DURATION",  kSTColW + 4,     kSTDivY1 + 4, kSTDim, 1);
-  display_.musicDrawText("FOLLOW",    2 * kSTColW + 4, kSTDivY1 + 4, kSTDim, 1);
-  display_.musicDrawText("SHARPNESS", 3 * kSTColW + 4, kSTDivY1 + 4, kSTDim, 1);
+  display_.musicDrawText("FLAT",  4,               kSTDiv1 + 4, kSTDim, 1);
+  display_.musicDrawText("SNAP",  kSTColW + 4,     kSTDiv1 + 4, kSTDim, 1);
+  display_.musicDrawText("ARC",   2 * kSTColW + 4, kSTDiv1 + 4, kSTDim, 1);
+  display_.musicDrawText("POWER", 3 * kSTColW + 4, kSTDiv1 + 4, kSTDim, 1);
 
   char buf[24];
-
-  // Last swing values
-  const int kValY  = 54;
-  const int kBestY = 82;
+  constexpr int kValY  = 54;
+  constexpr int kBestY = 84;
 
   if (last.valid) {
-    snprintf(buf, sizeof(buf), "%.1fg", last.peakG);
+    snprintf(buf, sizeof(buf), "%d%%", static_cast<int>(last.planScore * 100.0f));
     display_.musicDrawText(buf, 4, kValY,
-                           last.peakG >= kSTTargetPeakG ? kSTGreen : kSTWhite, 2);
-
-    snprintf(buf, sizeof(buf), "%ums", static_cast<unsigned>(last.durationMs));
-    const bool durOk = last.durationMs >= kSTTargetDurMinMs &&
-                       last.durationMs <= kSTTargetDurMaxMs;
-    display_.musicDrawText(buf, kSTColW + 4, kValY, durOk ? kSTGreen : kSTWhite, 2);
-
-    snprintf(buf, sizeof(buf), "%ums", static_cast<unsigned>(last.followMs));
+                           last.planScore >= kSTTargetPlanScore ? kSTGreen : kSTWhite, 2);
+    snprintf(buf, sizeof(buf), "%ddps", static_cast<int>(last.snapDps));
+    display_.musicDrawText(buf, kSTColW + 4, kValY,
+                           last.snapDps >= kSTTargetSnapDps ? kSTGreen : kSTWhite, 2);
+    snprintf(buf, sizeof(buf), "%ddeg", static_cast<int>(last.arcDeg));
     display_.musicDrawText(buf, 2 * kSTColW + 4, kValY,
-                           last.followMs >= kSTTargetFollowMs ? kSTGreen : kSTWhite, 2);
-
-    snprintf(buf, sizeof(buf), "%.1f", last.sharpness);
+                           last.arcDeg >= kSTTargetArcDeg ? kSTGreen : kSTWhite, 2);
+    snprintf(buf, sizeof(buf), "%.1fg", last.peakG);
     display_.musicDrawText(buf, 3 * kSTColW + 4, kValY,
-                           last.sharpness >= kSTTargetSharpness ? kSTGreen : kSTWhite, 2);
+                           last.peakG >= kSTTargetPeakG ? kSTGreen : kSTWhite, 2);
   } else {
     display_.musicDrawText("--", 4,               kValY, kSTDim, 2);
     display_.musicDrawText("--", kSTColW + 4,     kValY, kSTDim, 2);
@@ -5285,31 +5267,28 @@ void App::renderSwingTrainer() {
     display_.musicDrawText("--", 3 * kSTColW + 4, kValY, kSTDim, 2);
   }
 
-  // Personal best values
   if (best.valid) {
-    snprintf(buf, sizeof(buf), "b:%.1fg", best.peakG);
+    snprintf(buf, sizeof(buf), "b:%d%%", static_cast<int>(best.planScore * 100.0f));
     display_.musicDrawText(buf, 4, kBestY, kSTDim, 1);
-    snprintf(buf, sizeof(buf), "b:%ums", static_cast<unsigned>(best.durationMs));
+    snprintf(buf, sizeof(buf), "b:%ddps", static_cast<int>(best.snapDps));
     display_.musicDrawText(buf, kSTColW + 4, kBestY, kSTDim, 1);
-    snprintf(buf, sizeof(buf), "b:%ums", static_cast<unsigned>(best.followMs));
+    snprintf(buf, sizeof(buf), "b:%ddeg", static_cast<int>(best.arcDeg));
     display_.musicDrawText(buf, 2 * kSTColW + 4, kBestY, kSTDim, 1);
-    snprintf(buf, sizeof(buf), "b:%.1f", best.sharpness);
+    snprintf(buf, sizeof(buf), "b:%.1fg", best.peakG);
     display_.musicDrawText(buf, 3 * kSTColW + 4, kBestY, kSTDim, 1);
   }
 
-  // Footer: targets
-  display_.musicDrawText("peak>=8g",      4,               kSTDivY2 + 4, kSTDim, 1);
-  display_.musicDrawText("350-650ms",     kSTColW + 4,     kSTDivY2 + 4, kSTDim, 1);
-  display_.musicDrawText("follow>=180ms", 2 * kSTColW + 4, kSTDivY2 + 4, kSTDim, 1);
-  display_.musicDrawText("sharp>=1.8",    3 * kSTColW + 4, kSTDivY2 + 4, kSTDim, 1);
+  display_.musicDrawText(">=70%",    4,               kSTDiv2 + 4, kSTDim, 1);
+  display_.musicDrawText(">=150dps", kSTColW + 4,     kSTDiv2 + 4, kSTDim, 1);
+  display_.musicDrawText(">=60deg",  2 * kSTColW + 4, kSTDiv2 + 4, kSTDim, 1);
+  display_.musicDrawText(">=4g",     3 * kSTColW + 4, kSTDiv2 + 4, kSTDim, 1);
 
-  // Footer: status / hint
   if (swingTrainer_.phase == SwingTrainerState::Phase::Ready) {
-    display_.musicDrawText("READY - swing now", 4, kSTDivY2 + 18, kSTDim, 1);
+    display_.musicDrawText("READY - swing now", 4, kSTDiv2 + 18, kSTDim, 1);
   } else {
-    display_.musicDrawText("NICE SWING!", 4, kSTDivY2 + 18, kSTGreen, 1);
+    display_.musicDrawText("NICE!", 4, kSTDiv2 + 18, kSTGreen, 1);
   }
-  display_.musicDrawText("[press=change stroke]", 380, kSTDivY2 + 18, kSTDim, 1);
+  display_.musicDrawText("[press=change stroke]", 380, kSTDiv2 + 18, kSTDim, 1);
 
   display_.musicCommit();
 }

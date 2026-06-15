@@ -39,6 +39,8 @@ class FocusTimer {
 
   bool available() const;
   bool readAccel(float& x, float& y, float& z);
+  bool readGyro(float& gx, float& gy, float& gz);
+  void setHighRangeGyro(bool highRange);
   bool isActiveTimerRunning() const;
   State state() const;
   Genre genre() const;
@@ -92,6 +94,7 @@ class FocusTimer {
 
   bool imuAvailable_ = false;
   float accelScale_ = 4.0f / 32768.0f;
+  float gyroScale_  = 32.0f / 32768.0f;
   OrientationState rawOrientation_ = OrientationState::Unknown;
   OrientationState stableOrientation_ = OrientationState::Unknown;
   OrientationState candidateOrientation_ = OrientationState::Unknown;

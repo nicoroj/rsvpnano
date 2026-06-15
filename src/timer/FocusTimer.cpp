@@ -14,7 +14,12 @@ constexpr uint8_t kImuCtrl2Reg = 0x03;
 constexpr uint8_t kImuCtrl5Reg = 0x06;
 constexpr uint8_t kImuCtrl7Reg = 0x08;
 constexpr uint8_t kImuCtrl8Reg = 0x09;
-constexpr uint8_t kImuAccelStartReg = 0x35;
+constexpr uint8_t kImuAccelStartReg  = 0x35;
+constexpr uint8_t kImuGyroStartReg   = 0x3B;
+constexpr uint8_t kImuCtrl2Normal    = 0x16;  // ±32 dps, 229 Hz
+constexpr uint8_t kImuCtrl2HighRange = 0x76;  // ±2048 dps, 229 Hz
+constexpr float   kImuGyroScaleNormal    = 32.0f / 32768.0f;
+constexpr float   kImuGyroScaleHighRange = 2048.0f / 32768.0f;
 constexpr uint8_t kImuResetReg = 0x60;
 constexpr uint8_t kImuResetValue = 0xB0;
 constexpr uint8_t kImuResetResultReg = 0x4D;
@@ -297,7 +302,7 @@ bool FocusTimer::initImu() {
 
   if (!updateRegister(kImuCtrl1Reg, 0x40, 0x40) ||
       !writeRegister(kImuCtrl8Reg, 0x80) ||
-      !writeRegister(kImuCtrl2Reg, 0x16) ||
+      !writeRegister(kImuCtrl2Reg, kImuCtrl2Normal) ||
       !updateRegister(kImuCtrl5Reg, 0x07, 0x07) ||
       !updateRegister(kImuCtrl7Reg, 0x01, 0x01)) {
     imuAvailable_ = false;
@@ -378,6 +383,25 @@ bool FocusTimer::readAccelerometer(float &x, float &y, float &z) {
   y = rawY * accelScale_;
   z = rawZ * accelScale_;
   return true;
+}
+
+bool FocusTimer::readGyro(float& gx, float& gy, float& gz) {
+  if (!imuAvailable_) return false;
+  uint8_t buffer[6] = {0};
+  if (!readRegisters(kImuGyroStartReg, buffer, sizeof(buffer))) return false;
+  const int16_t rawX = static_cast<int16_t>((buffer[1] << 8) | buffer[0]);
+  const int16_t rawY = static_cast<int16_t>((buffer[3] << 8) | buffer[2]);
+  const int16_t rawZ = static_cast<int16_t>((buffer[5] << 8) | buffer[4]);
+  gx = rawX * gyroScale_;
+  gy = rawY * gyroScale_;
+  gz = rawZ * gyroScale_;
+  return true;
+}
+
+void FocusTimer::setHighRangeGyro(bool highRange) {
+  if (!imuAvailable_) return;
+  writeRegister(kImuCtrl2Reg, highRange ? kImuCtrl2HighRange : kImuCtrl2Normal);
+  gyroScale_ = highRange ? kImuGyroScaleHighRange : kImuGyroScaleNormal;
 }
 
 void FocusTimer::updateOrientation(uint32_t nowMs) {
